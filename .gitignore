@@ -1,0 +1,22 @@
+# Local agent config / references (kept out of the repo)
+.claude/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+*.local
+
+# TS build info
+*.tsbuildinfo

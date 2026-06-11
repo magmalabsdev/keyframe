@@ -1,0 +1,102 @@
+.bar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+  min-height: 0;
+}
+
+.grow {
+  flex: 1;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  padding: 8px 12px 6px;
+}
+
+.importBtn {
+  font-size: 11px;
+  padding: 3px 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.sceneSelect {
+  margin: 0 12px 10px;
+}
+
+.objectList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 6px 8px;
+  min-height: 0;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+  padding: 24px 16px;
+  line-height: 1.6;
+}
+
+.objectRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+.objectRow:hover {
+  background: var(--panel-2);
+}
+.objectRow.selected {
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+}
+
+.objectName {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eye,
+.delete {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--text-dim);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 13px;
+}
+.eye:hover {
+  color: var(--text);
+  background: none;
+}
+.delete {
+  opacity: 0;
+  font-size: 16px;
+}
+.objectRow:hover .delete {
+  opacity: 1;
+}
+.delete:hover {
+  color: var(--danger);
+  background: none;
+}

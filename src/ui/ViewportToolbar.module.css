@@ -1,0 +1,44 @@
+.toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(20, 23, 28, 0.82);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  backdrop-filter: blur(6px);
+}
+
+.tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 5px 8px;
+  width: 96px;
+  text-align: left;
+  color: var(--text-dim);
+}
+.tool:hover {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.tool.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.glyph {
+  width: 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.label {
+  font-size: 12px;
+}

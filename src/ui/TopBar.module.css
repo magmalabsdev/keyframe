@@ -1,0 +1,63 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  padding: 0 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo {
+  width: 22px;
+  height: 22px;
+}
+
+.appName {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.projectName {
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  width: 220px;
+  font-weight: 500;
+}
+.projectName:hover {
+  border-color: var(--border);
+}
+
+.saveStatus {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 54px;
+}
+
+.undoRedo {
+  display: flex;
+  gap: 2px;
+}
+.undoRedo button {
+  padding: 4px 9px;
+  font-size: 15px;
+  line-height: 1;
+}
+.undoRedo button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}

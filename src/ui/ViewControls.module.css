@@ -1,0 +1,23 @@
+.wrap {
+  width: 100%;
+  padding: 10px 12px;
+}
+
+.label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.grid button {
+  padding: 6px 4px;
+  font-size: 12px;
+}
