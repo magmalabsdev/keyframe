@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { GizmoHelper, GizmoViewcube } from '@react-three/drei';
 import { useActiveScene } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
 import { importModelFiles } from '../io/importModel';
@@ -9,6 +8,8 @@ import { CameraRig } from './CameraRig';
 import { SceneObjects } from './SceneObjects';
 import { Gizmo } from './Gizmo';
 import { AnimationSystem } from './AnimationSystem';
+import { ViewCube } from './ViewCube';
+import { registerCamera } from './cameraApi';
 import { RenderRegistrar } from '../render/RenderRegistrar';
 import { ViewportToolbar } from '../ui/ViewportToolbar';
 import styles from './Viewport.module.css';
@@ -17,6 +18,7 @@ export function Viewport() {
   const scene = useActiveScene();
   const clearSelection = useEditorStore((s) => s.clearSelection);
   const exportProgress = useEditorStore((s) => s.exportProgress);
+  const renderPreview = useEditorStore((s) => s.renderPreview);
   const [dragOver, setDragOver] = useState(false);
 
   return (
@@ -43,6 +45,7 @@ export function Viewport() {
           camera.position.set(0, 0, 1200);
           camera.lookAt(0, 0, 0);
           camera.updateProjectionMatrix();
+          registerCamera(camera);
         }}
         onPointerMissed={(e) => {
           if (e.button === 0) clearSelection();
@@ -61,18 +64,14 @@ export function Viewport() {
         <AnimationSystem />
         <RenderRegistrar />
         <CameraRig />
-
-        <GizmoHelper alignment="top-right" margin={[72, 72]}>
-          <GizmoViewcube
-            color="#262a32"
-            textColor="#e7e9ee"
-            strokeColor="#444b57"
-            hoverColor="#4c8bf5"
-          />
-        </GizmoHelper>
       </Canvas>
 
-      <ViewportToolbar />
+      {!renderPreview && (
+        <>
+          <ViewCube />
+          <ViewportToolbar />
+        </>
+      )}
 
       {dragOver && (
         <div className={styles.dropOverlay}>Drop model files to import</div>
@@ -95,9 +94,15 @@ export function Viewport() {
         </div>
       )}
 
-      <div className={styles.hud}>
-        <span>RMB orbit · MMB / WASD-EQ pan · wheel / +- zoom</span>
-      </div>
+      {renderPreview ? (
+        <div className={styles.renderHud}>
+          <span>● Rendering — press Space to stop</span>
+        </div>
+      ) : (
+        <div className={styles.hud}>
+          <span>RMB orbit · MMB / WASD-EQ pan · wheel / +- zoom</span>
+        </div>
+      )}
     </div>
   );
 }

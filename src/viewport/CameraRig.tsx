@@ -49,7 +49,15 @@ export function CameraRig() {
     c.mouseButtons.middle = ACTION.TRUCK;
     c.mouseButtons.wheel = ACTION.DOLLY;
     c.dollyToCursor = true;
-    c.smoothTime = 0.12;
+    // Static, immediate navigation — no inertia/easing on drag or scroll.
+    c.smoothTime = 0;
+    c.draggingSmoothTime = 0;
+    // No zoom-in limit: allow dollying arbitrarily close / through the target.
+    c.minDistance = 0.01;
+    c.maxDistance = Infinity;
+    c.infinityDolly = true;
+    // The camera uses Z as up; tell camera-controls so orbit math is correct.
+    c.updateCameraUp();
     registerControls(c);
     return () => {
       if (getControls() === c) registerControls(null);
@@ -59,11 +67,18 @@ export function CameraRig() {
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (isTypingTarget()) return;
+      // macOS does not deliver keyup while a modifier (⌘/Ctrl) is held, which
+      // would leave movement keys stuck. Ignore + clear movement during modifiers.
+      if (e.metaKey || e.ctrlKey || e.key === 'Meta' || e.key === 'Control') {
+        keys.current.clear();
+        return;
+      }
       const k = e.key.toLowerCase();
       if (MOVE_KEYS.has(k)) keys.current.add(k);
     };
     const up = (e: KeyboardEvent) => {
-      keys.current.delete(e.key.toLowerCase());
+      if (e.key === 'Meta' || e.key === 'Control') keys.current.clear();
+      else keys.current.delete(e.key.toLowerCase());
     };
     const blur = () => keys.current.clear();
     window.addEventListener('keydown', down);

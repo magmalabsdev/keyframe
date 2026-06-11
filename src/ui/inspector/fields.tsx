@@ -6,29 +6,32 @@ function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 1000) / 1000);
 }
 
-/** A numeric input that commits on blur/Enter and stays in sync otherwise. */
+/** A numeric input that commits on blur/Enter and stays in sync otherwise.
+ * When `mixed`, the field shows a red MIXED placeholder; typing a value commits. */
 export function NumberField({
   value,
   onCommit,
   suffix,
   axis,
+  mixed,
 }: {
   value: number;
   onCommit: (v: number) => void;
   suffix?: string;
   axis?: 'x' | 'y' | 'z';
+  mixed?: boolean;
 }) {
-  const [text, setText] = useState(fmt(value));
+  const [text, setText] = useState(mixed ? '' : fmt(value));
   const focused = useRef(false);
 
   useEffect(() => {
-    if (!focused.current) setText(fmt(value));
-  }, [value]);
+    if (!focused.current) setText(mixed ? '' : fmt(value));
+  }, [value, mixed]);
 
   const commit = () => {
     const n = parseFloat(text);
     if (!Number.isNaN(n)) onCommit(n);
-    else setText(fmt(value));
+    else setText(mixed ? '' : fmt(value));
   };
 
   return (
@@ -36,6 +39,8 @@ export function NumberField({
       {axis && <span className={styles.axisLabel}>{axis.toUpperCase()}</span>}
       <input
         value={text}
+        placeholder={mixed ? 'MIXED' : undefined}
+        className={mixed && text === '' ? styles.mixedInput : undefined}
         inputMode="decimal"
         onChange={(e) => setText(e.target.value)}
         onFocus={() => (focused.current = true)}
@@ -46,7 +51,7 @@ export function NumberField({
         onKeyDown={(e) => {
           if (e.key === 'Enter') e.currentTarget.blur();
           if (e.key === 'Escape') {
-            setText(fmt(value));
+            setText(mixed ? '' : fmt(value));
             e.currentTarget.blur();
           }
         }}
@@ -86,28 +91,37 @@ export function Vec3Field({
   );
 }
 
-/** A 0..1 slider with a percentage / value readout. */
+/** A 0..1 slider with a percentage / value readout. Shows MIXED when undefined. */
 export function Slider({
   value,
   onChange,
   display,
+  mixed,
 }: {
   value: number;
   onChange: (v: number) => void;
   display?: (v: number) => string;
+  mixed?: boolean;
 }) {
+  const pct = Math.max(0, Math.min(1, value)) * 100;
   return (
     <div className={styles.slider}>
       <input
+        className={styles.range}
         type="range"
         min={0}
         max={1}
         step={0.01}
-        value={value}
+        value={mixed ? 0 : value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
+        style={{
+          background: mixed
+            ? 'var(--panel-3)'
+            : `linear-gradient(to right, var(--accent) ${pct}%, var(--panel-3) ${pct}%)`,
+        }}
       />
-      <span className={styles.sliderValue}>
-        {display ? display(value) : value.toFixed(2)}
+      <span className={mixed ? styles.mixedLabel : styles.sliderValue}>
+        {mixed ? 'MIXED' : display ? display(value) : value.toFixed(2)}
       </span>
     </div>
   );
@@ -131,18 +145,23 @@ const PALETTE = [
 export function ColorField({
   value,
   onChange,
+  mixed,
 }: {
   value: string;
   onChange: (v: string) => void;
+  mixed?: boolean;
 }) {
   return (
     <div className={styles.colorField}>
+      {mixed && <span className={styles.mixedLabel}>MIXED</span>}
       <div className={styles.palette}>
         {PALETTE.map((c) => (
           <button
             key={c}
             className={`${styles.swatch} ${
-              c.toLowerCase() === value.toLowerCase() ? styles.swatchActive : ''
+              !mixed && c.toLowerCase() === value.toLowerCase()
+                ? styles.swatchActive
+                : ''
             }`}
             style={{ background: c }}
             onClick={() => onChange(c)}
@@ -153,7 +172,7 @@ export function ColorField({
       <input
         type="color"
         className={styles.colorPicker}
-        value={value}
+        value={mixed ? '#888888' : value}
         onChange={(e) => onChange(e.target.value)}
       />
     </div>

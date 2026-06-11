@@ -1,0 +1,18 @@
+import puppeteer from 'puppeteer-core';
+const CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const b=await puppeteer.launch({executablePath:CHROME,headless:true,args:['--no-sandbox','--enable-unsafe-swiftshader','--use-angle=swiftshader']});
+const p=await b.newPage(); await p.setViewport({width:1680,height:1050});
+const errs=[]; p.on('pageerror',e=>errs.push(e.message)); p.on('console',m=>m.type()==='error'&&errs.push(m.text())); p.on('dialog',d=>d.dismiss());
+await p.goto('http://localhost:5174/',{waitUntil:'networkidle2'}); await new Promise(r=>setTimeout(r,700));
+await p.evaluate(()=>{const kf=window.__kf; kf.doc.getState().removeObjects(kf.getActiveScene().objects.map(o=>o.id));});
+await (await p.$('input[accept*="stl"]')).uploadFile('/tmp/as1.stp');
+await new Promise(r=>setTimeout(r,9000));
+await p.evaluate(()=>{[...document.querySelectorAll('button')].find(x=>x.textContent?.includes('Iso'))?.click();});
+await new Promise(r=>setTimeout(r,800));
+const info=await p.evaluate(()=>{const objs=window.__kf.getActiveScene().objects; return {count:objs.length, names:objs.slice(0,8).map(o=>o.name), colors:[...new Set(objs.map(o=>o.material.color))]};});
+console.log('objects:',info.count);
+console.log('sample names:',JSON.stringify(info.names));
+console.log('distinct colors:',JSON.stringify(info.colors));
+await p.screenshot({path:'/tmp/kf-step-parts.png'});
+await b.close();
+console.log(errs.length?('ERRORS: '+errs.join('; ')):'no errors');

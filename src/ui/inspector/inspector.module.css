@@ -110,14 +110,57 @@
   font-size: 10px;
 }
 
+.mixedInput::placeholder {
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  opacity: 1;
+}
+
+.mixedLabel {
+  color: var(--danger);
+  font: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
 .slider {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.slider input[type='range'] {
+.range {
   flex: 1;
-  accent-color: var(--accent);
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  /* fill is set inline via a value-based linear-gradient */
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  margin-top: 0;
+}
+.range::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+}
+.range::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
 }
 .sliderValue {
   font: var(--mono);

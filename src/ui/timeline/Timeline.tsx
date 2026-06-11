@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { useActiveScene, useDocumentStore, useObject } from '../../state/documentStore';
 import { useEditorStore } from '../../state/editorStore';
 import { keyframeSelection } from '../../animation/transformEdit';
-import { getCameraState } from '../../viewport/cameraApi';
+import { applyCameraState, getCameraState } from '../../viewport/cameraApi';
 import styles from './timeline.module.css';
 
 function fmt(ms: number): string {
@@ -159,6 +159,7 @@ export function Timeline() {
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   setPlayhead(k.timeMs);
+                  applyCameraState(k);
                 }}
               />
             ))}

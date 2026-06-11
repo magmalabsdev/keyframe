@@ -1,18 +1,23 @@
 import { Grid, Line } from '@react-three/drei';
 import { useActiveScene } from '../state/documentStore';
+import { useEditorStore } from '../state/editorStore';
 
 /**
  * The build plate: an infinite reference grid on the XY plane (Z-up), the
- * 1600x900 mm camera framing rectangle, and origin axes.
+ * 1600x900 mm camera framing rectangle, and origin axes. Hidden during a clean
+ * render preview or video export.
  */
 export function BuildPlate() {
   const scene = useActiveScene();
+  const presenting = useEditorStore(
+    (s) => s.renderPreview || s.exportProgress != null,
+  );
   const { buildPlateWidth: w, buildPlateDepth: d, gridSize } = scene.settings;
   const hw = w / 2;
   const hd = d / 2;
 
   return (
-    <group>
+    <group visible={!presenting} userData={{ excludeFromRender: true }}>
       {/* Reference grid, rotated from drei's default XZ plane onto the XY plane. */}
       <Grid
         rotation={[Math.PI / 2, 0, 0]}

@@ -2,9 +2,15 @@ declare module 'occt-import-js' {
   export interface OcctAttribute {
     array: ArrayLike<number>;
   }
+  export interface OcctBrepFace {
+    first: number;
+    last: number;
+    color: [number, number, number] | null;
+  }
   export interface OcctMesh {
     name?: string;
     color?: [number, number, number];
+    brep_faces?: OcctBrepFace[];
     attributes: {
       position: OcctAttribute;
       normal?: OcctAttribute;

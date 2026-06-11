@@ -27,11 +27,31 @@
   padding: 8px 12px 6px;
 }
 
+.headActions {
+  display: flex;
+  gap: 4px;
+}
+
 .importBtn {
   font-size: 11px;
   padding: 3px 8px;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.disclosure {
+  width: 14px;
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 9px;
+  padding: 0;
+  cursor: pointer;
+}
+.disclosure:hover {
+  color: var(--text);
+  background: none;
 }
 
 .sceneSelect {

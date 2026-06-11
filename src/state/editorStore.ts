@@ -18,6 +18,8 @@ export interface EditorState {
   saveStatus: SaveStatus;
   /** 0..1 while exporting video, null otherwise. */
   exportProgress: number | null;
+  /** True while previewing a clean render (build plate/gizmo/overlays hidden). */
+  renderPreview: boolean;
 
   setSelection: (ids: string[]) => void;
   toggleSelection: (id: string, additive: boolean) => void;
@@ -28,6 +30,7 @@ export interface EditorState {
   setDraggingId: (id: string | null) => void;
   setSaveStatus: (status: SaveStatus) => void;
   setExportProgress: (progress: number | null) => void;
+  setRenderPreview: (on: boolean) => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -38,6 +41,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   draggingId: null,
   saveStatus: 'idle',
   exportProgress: null,
+  renderPreview: false,
 
   setSelection: (ids) => set({ selectedIds: ids }),
   toggleSelection: (id, additive) =>
@@ -50,8 +54,11 @@ export const useEditorStore = create<EditorState>((set) => ({
   clearSelection: () => set({ selectedIds: [] }),
   setTool: (tool) => set({ activeTool: tool }),
   setPlayhead: (ms) => set({ playheadMs: Math.max(0, ms) }),
-  setPlaying: (playing) => set({ playing }),
+  // Pausing always exits a clean-render preview.
+  setPlaying: (playing) =>
+    set(playing ? { playing } : { playing: false, renderPreview: false }),
   setDraggingId: (id) => set({ draggingId: id }),
+  setRenderPreview: (renderPreview) => set({ renderPreview }),
   setSaveStatus: (saveStatus) => set({ saveStatus }),
   setExportProgress: (exportProgress) => set({ exportProgress }),
 }));

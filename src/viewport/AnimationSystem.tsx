@@ -29,8 +29,14 @@ export function AnimationSystem() {
     let time = editor.playheadMs;
     if (editor.playing) {
       time += delta * 1000;
-      if (time >= scene.durationMs) time = 0; // loop
-      editor.setPlayhead(time);
+      if (time >= scene.durationMs) {
+        // Play once, then stop at the end (also exits render preview).
+        time = scene.durationMs;
+        editor.setPlayhead(time);
+        editor.setPlaying(false);
+      } else {
+        editor.setPlayhead(time);
+      }
     }
 
     for (const obj of scene.objects) {

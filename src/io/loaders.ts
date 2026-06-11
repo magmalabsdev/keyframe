@@ -5,10 +5,16 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ModelFormat } from '../state/types';
 
-export interface LoadedModel {
+export interface LoadedPart {
   name: string;
-  format: ModelFormat;
   geometry: THREE.BufferGeometry;
+  /** Hex color from the source file, if any (e.g. STEP face/solid colors). */
+  color?: string;
+}
+
+export interface LoadedModel {
+  format: ModelFormat;
+  parts: LoadedPart[];
 }
 
 export const SUPPORTED_EXTENSIONS = ['stl', 'obj', 'gltf', 'glb', 'step', 'stp'];
@@ -22,7 +28,6 @@ function mergeObject3D(root: THREE.Object3D): THREE.BufferGeometry {
     if (!mesh.isMesh || !mesh.geometry) return;
     let g = mesh.geometry.clone();
     g.applyMatrix4(mesh.matrixWorld);
-    // Keep only position/normal so geometries with differing attribute sets merge.
     for (const key of Object.keys(g.attributes)) {
       if (key !== 'position' && key !== 'normal') g.deleteAttribute(key);
     }
@@ -38,16 +43,57 @@ function mergeObject3D(root: THREE.Object3D): THREE.BufferGeometry {
     : BufferGeometryUtils.mergeGeometries(geometries, false);
 }
 
-/** Center on the build plate: centered in XY, resting on z = 0 (Z-up). */
-function centerOnPlate(g: THREE.BufferGeometry): void {
-  g.computeBoundingBox();
-  const bb = g.boundingBox!;
+/**
+ * Center all parts together on the build plate: the combined bounding box is
+ * centered in XY and rests on z = 0, preserving the parts' relative arrangement.
+ */
+function centerParts(parts: LoadedPart[]): void {
+  const bb = new THREE.Box3();
+  for (const p of parts) {
+    p.geometry.computeBoundingBox();
+    bb.union(p.geometry.boundingBox!);
+  }
   const cx = (bb.min.x + bb.max.x) / 2;
   const cy = (bb.min.y + bb.max.y) / 2;
   const minZ = bb.min.z;
-  g.translate(-cx, -cy, -minZ);
-  g.computeBoundingBox();
-  g.computeBoundingSphere();
+  for (const p of parts) {
+    p.geometry.translate(-cx, -cy, -minZ);
+    p.geometry.computeBoundingBox();
+    p.geometry.computeBoundingSphere();
+  }
+}
+
+function occtColorToHex(c?: ArrayLike<number> | null): string | undefined {
+  if (!c || c.length < 3) return undefined;
+  return '#' + new THREE.Color(c[0], c[1], c[2]).getHexString();
+}
+
+/**
+ * A representative color for a STEP solid. Colors can live on the mesh (uniform)
+ * or per brep face; when per-face, mesh.color is a default gray. Prefer the
+ * dominant (most triangle coverage) non-null face color, else the mesh color.
+ */
+function pickStepColor(
+  mesh: import('occt-import-js').OcctMesh,
+): string | undefined {
+  const faces = mesh.brep_faces;
+  if (faces && faces.length > 0) {
+    const coverage = new Map<string, { weight: number; color: number[] }>();
+    for (const f of faces) {
+      if (!f.color) continue;
+      const key = f.color.join(',');
+      const weight = Math.max(1, f.last - f.first + 1);
+      const entry = coverage.get(key);
+      if (entry) entry.weight += weight;
+      else coverage.set(key, { weight, color: f.color });
+    }
+    let best: { weight: number; color: number[] } | undefined;
+    for (const entry of coverage.values()) {
+      if (!best || entry.weight > best.weight) best = entry;
+    }
+    if (best) return occtColorToHex(best.color);
+  }
+  return occtColorToHex(mesh.color);
 }
 
 async function loadGltf(file: File, ext: string): Promise<THREE.BufferGeometry> {
@@ -58,7 +104,8 @@ async function loadGltf(file: File, ext: string): Promise<THREE.BufferGeometry> 
   return mergeObject3D(gltf.scene);
 }
 
-async function loadStep(file: File): Promise<THREE.BufferGeometry> {
+/** STEP imports each solid as its own part, carrying its file color. */
+async function loadStep(file: File, baseName: string): Promise<LoadedPart[]> {
   // OpenCascade WASM is several MB; load it only when a STEP file is imported.
   const wasmUrl = (
     await import('occt-import-js/dist/occt-import-js.wasm?url')
@@ -85,8 +132,7 @@ async function loadStep(file: File): Promise<THREE.BufferGeometry> {
     throw new Error('Failed to parse STEP file');
   }
 
-  const geometries: THREE.BufferGeometry[] = [];
-  for (const mesh of result.meshes) {
+  return result.meshes.map((mesh, i) => {
     const g = new THREE.BufferGeometry();
     g.setAttribute(
       'position',
@@ -99,46 +145,48 @@ async function loadStep(file: File): Promise<THREE.BufferGeometry> {
       );
     }
     if (mesh.index) g.setIndex(Array.from(mesh.index.array));
-    geometries.push(g.index ? g.toNonIndexed() : g);
-  }
-  const merged =
-    geometries.length === 1
-      ? geometries[0]
-      : BufferGeometryUtils.mergeGeometries(geometries, false);
-  if (!merged.getAttribute('normal')) merged.computeVertexNormals();
-  return merged;
+    const geometry = g.index ? g.toNonIndexed() : g;
+    if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+    return {
+      // Append an index so duplicate solid names (often all "SOLID") stay unique.
+      name: `${mesh.name?.trim() || baseName} ${i + 1}`,
+      geometry,
+      color: pickStepColor(mesh),
+    };
+  });
 }
 
 export async function loadModelFile(file: File): Promise<LoadedModel> {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase();
   const name = file.name.replace(/\.[^.]+$/, '') || 'Imported';
 
-  let geometry: THREE.BufferGeometry;
+  let parts: LoadedPart[];
   let format: ModelFormat;
 
   switch (ext) {
     case 'stl': {
       const buf = await file.arrayBuffer();
-      geometry = new STLLoader().parse(buf);
+      const geometry = new STLLoader().parse(buf);
       if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+      parts = [{ name, geometry }];
       format = 'stl';
       break;
     }
     case 'obj': {
       const text = await file.text();
-      geometry = mergeObject3D(new OBJLoader().parse(text));
+      parts = [{ name, geometry: mergeObject3D(new OBJLoader().parse(text)) }];
       format = 'obj';
       break;
     }
     case 'gltf':
     case 'glb': {
-      geometry = await loadGltf(file, ext);
+      parts = [{ name, geometry: await loadGltf(file, ext) }];
       format = ext === 'glb' ? 'glb' : 'gltf';
       break;
     }
     case 'step':
     case 'stp': {
-      geometry = await loadStep(file);
+      parts = await loadStep(file, name);
       format = 'step';
       break;
     }
@@ -146,6 +194,6 @@ export async function loadModelFile(file: File): Promise<LoadedModel> {
       throw new Error(`Unsupported file type: .${ext}`);
   }
 
-  centerOnPlate(geometry);
-  return { name, format, geometry };
+  centerParts(parts);
+  return { format, parts };
 }

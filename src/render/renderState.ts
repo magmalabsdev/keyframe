@@ -6,11 +6,12 @@ import type { Project } from '../state/types';
  * reference on any edit, so a simple identity check detects modifications. */
 let lastRenderProject: Project | null = null;
 
-/** Play the entire scene from the start (the "Render" button). */
+/** Play the entire scene from the start with a clean preview (the "Render" button). */
 export function startRender(): void {
   const editor = useEditorStore.getState();
   editor.setPlayhead(0);
   editor.setPlaying(true);
+  editor.setRenderPreview(true);
   lastRenderProject = useDocumentStore.getState().project;
 }
 

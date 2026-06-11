@@ -107,6 +107,17 @@ export async function exportVideo(opts: ExportOptions = {}): Promise<void> {
   const prevPixelRatio = gl.getPixelRatio();
   const prevAspect = camera.aspect;
 
+  // Hide non-model helpers (build plate, grid, axes) so they aren't captured.
+  const hidden: THREE.Object3D[] = [];
+  threeScene.traverse((o) => {
+    if (o.userData?.excludeFromRender && o.visible) {
+      o.visible = false;
+      hidden.push(o);
+    }
+  });
+  // Let React unmount the gizmo (it hides itself while exportProgress is set).
+  await new Promise((r) => setTimeout(r, 60));
+
   setFrameloop?.('never');
   gl.setPixelRatio(1);
   gl.setSize(width, height, false);
@@ -147,6 +158,7 @@ export async function exportVideo(opts: ExportOptions = {}): Promise<void> {
     gl.setSize(prevSize.x, prevSize.y, false);
     camera.aspect = prevAspect;
     camera.updateProjectionMatrix();
+    for (const o of hidden) o.visible = true;
     setFrameloop?.('always');
   }
 }

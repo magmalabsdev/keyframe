@@ -16,6 +16,19 @@
   border-radius: var(--radius-sm);
 }
 
+.renderHud {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  color: #fff;
+  font: var(--mono);
+  background: rgba(220, 70, 70, 0.55);
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
 .dropOverlay {
   position: absolute;
   inset: 0;

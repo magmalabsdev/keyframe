@@ -2,16 +2,16 @@ import * as THREE from 'three';
 import { useActiveScene, useDocumentStore } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
 import { getGeometry } from '../io/geometryCache';
+import { selectExact, selectInScene } from '../scene/grouping';
+import { childrenOf } from '../scene/tree';
 import type { SceneObject } from '../state/types';
 
 const d2r = THREE.MathUtils.degToRad;
 
-function ObjectMesh({ obj }: { obj: SceneObject }) {
+function ObjectMesh({ obj, selected }: { obj: SceneObject; selected: boolean }) {
   const asset = useDocumentStore((s) =>
     obj.assetId ? s.project.assets[obj.assetId] : undefined,
   );
-  const selected = useEditorStore((s) => s.selectedIds.includes(obj.id));
-  const toggleSelection = useEditorStore((s) => s.toggleSelection);
 
   if (!obj.visible || !asset) return null;
 
@@ -26,11 +26,12 @@ function ObjectMesh({ obj }: { obj: SceneObject }) {
       position={position}
       rotation={[d2r(rotation[0]), d2r(rotation[1]), d2r(rotation[2])]}
       scale={scale}
-      onPointerDown={(e) => {
-        // Left button only; right/middle are camera controls.
+      onClick={(e) => {
         if (e.button !== 0) return;
         e.stopPropagation();
-        toggleSelection(obj.id, e.shiftKey);
+        // Single click selects the whole group; double-click drills to the child.
+        if (e.detail >= 2) selectExact(obj.id);
+        else selectInScene(obj.id, e.shiftKey);
       }}
     >
       <meshStandardMaterial
@@ -46,12 +47,59 @@ function ObjectMesh({ obj }: { obj: SceneObject }) {
   );
 }
 
+function Node({
+  obj,
+  objects,
+  selected,
+  ancestorSelected,
+}: {
+  obj: SceneObject;
+  objects: SceneObject[];
+  selected: Set<string>;
+  ancestorSelected: boolean;
+}) {
+  const isSelected = ancestorSelected || selected.has(obj.id);
+
+  if (obj.type === 'group') {
+    if (!obj.visible) return null;
+    const { position, rotation, scale } = obj.transform;
+    return (
+      <group
+        name={obj.id}
+        position={position}
+        rotation={[d2r(rotation[0]), d2r(rotation[1]), d2r(rotation[2])]}
+        scale={scale}
+      >
+        {childrenOf(objects, obj.id).map((c) => (
+          <Node
+            key={c.id}
+            obj={c}
+            objects={objects}
+            selected={selected}
+            ancestorSelected={isSelected}
+          />
+        ))}
+      </group>
+    );
+  }
+
+  return <ObjectMesh obj={obj} selected={isSelected} />;
+}
+
 export function SceneObjects() {
   const objects = useActiveScene().objects;
+  const selected = new Set(useEditorStore((s) => s.selectedIds));
+  const roots = objects.filter((o) => !o.parentId);
   return (
     <>
-      {objects.map((o) => (
-        <ObjectMesh key={o.id} obj={o} />
+      {roots.map((o) => (
+        <Node
+          key={o.id}
+          obj={o}
+          objects={objects}
+          selected={selected}
+          ancestorSelected={false}
+        />
       ))}
     </>
   );

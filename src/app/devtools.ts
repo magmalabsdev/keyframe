@@ -5,6 +5,9 @@ import {
   applyTransformEdit,
 } from '../animation/transformEdit';
 import { restoreAutosave, saveNow } from '../io/persistence';
+import { getCameraState } from '../viewport/cameraApi';
+import { getR3F } from '../render/renderApi';
+import { groupSelection, ungroupSelection } from '../scene/grouping';
 
 /**
  * Dev-only hooks exposed on window.__kf for automated verification scripts.
@@ -21,5 +24,9 @@ export function installDevtools(): void {
     addKeyframeAtPlayhead,
     saveNow,
     restoreAutosave,
+    getCameraState,
+    getR3F,
+    groupSelection,
+    ungroupSelection,
   };
 }

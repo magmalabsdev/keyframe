@@ -21,6 +21,7 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
   // Show the pose at the current playhead so edits reflect (and update) keyframes.
   const t = evaluateObject(object, playheadMs);
   const animated = object.keyframes.length > 0;
+  const isGroup = object.type === 'group';
 
   return (
     <div className={styles.inspector}>
@@ -62,33 +63,35 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
         </Row>
       </Section>
 
-      <Section title="Material">
-        <Row label="Color">
-          <ColorField
-            value={material.color}
-            onChange={(c) => setMaterial(id, { color: c })}
-          />
-        </Row>
-        <Row label="Opacity">
-          <Slider
-            value={material.opacity}
-            onChange={(v) => setMaterial(id, { opacity: v })}
-            display={(v) => `${Math.round(v * 100)}%`}
-          />
-        </Row>
-        <Row label="Reflect">
-          <Slider
-            value={material.metalness}
-            onChange={(v) => setMaterial(id, { metalness: v })}
-          />
-        </Row>
-        <Row label="Rough">
-          <Slider
-            value={material.roughness}
-            onChange={(v) => setMaterial(id, { roughness: v })}
-          />
-        </Row>
-      </Section>
+      {!isGroup && (
+        <Section title="Material">
+          <Row label="Color">
+            <ColorField
+              value={material.color}
+              onChange={(c) => setMaterial(id, { color: c })}
+            />
+          </Row>
+          <Row label="Opacity">
+            <Slider
+              value={material.opacity}
+              onChange={(v) => setMaterial(id, { opacity: v })}
+              display={(v) => `${Math.round(v * 100)}%`}
+            />
+          </Row>
+          <Row label="Reflect">
+            <Slider
+              value={material.metalness}
+              onChange={(v) => setMaterial(id, { metalness: v })}
+            />
+          </Row>
+          <Row label="Rough">
+            <Slider
+              value={material.roughness}
+              onChange={(v) => setMaterial(id, { roughness: v })}
+            />
+          </Row>
+        </Section>
+      )}
 
       <Section
         title="Keyframes"

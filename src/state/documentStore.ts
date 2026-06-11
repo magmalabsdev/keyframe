@@ -29,6 +29,8 @@ export interface DocumentState {
 
   /** Add an imported geometry asset + its scene object to the active scene. */
   addImportedModel: (asset: Asset, object: SceneObject) => void;
+  /** Add several imported assets + objects in one update (multi-part files). */
+  addImportedModels: (assets: Asset[], objects: SceneObject[]) => void;
   /** Add already-built objects (e.g. from paste) to the active scene. */
   addObjects: (objects: SceneObject[]) => void;
   removeObjects: (ids: string[]) => void;
@@ -40,6 +42,31 @@ export interface DocumentState {
   /** Merge a partial transform (used by inspector fields). */
   patchObjectTransform: (id: string, patch: Partial<Transform>) => void;
   setObjectMaterial: (id: string, patch: Partial<Material>) => void;
+
+  /** Batch edits across several objects in one undo step (multi-select). */
+  patchObjectsTransform: (ids: string[], patch: Partial<Transform>) => void;
+  /** Set one transform component (position/rotation/scale × axis) on many objects,
+   * preserving each object's other components. */
+  setObjectsTransformComponent: (
+    ids: string[],
+    field: 'position' | 'rotation' | 'scale',
+    axis: 0 | 1 | 2,
+    value: number,
+  ) => void;
+  setObjectsMaterial: (ids: string[], patch: Partial<Material>) => void;
+  setObjectsVisible: (ids: string[], visible: boolean) => void;
+
+  /** Create a group and reparent children into it (one undo step). */
+  groupObjects: (
+    group: SceneObject,
+    childIds: string[],
+    localPositions: Record<string, [number, number, number]>,
+  ) => void;
+  /** Dissolve a group, applying baked child transforms (one undo step). */
+  ungroupObjects: (
+    groupId: string,
+    childUpdates: { id: string; parentId: string | null; transform: Transform }[],
+  ) => void;
 
   setSceneName: (name: string) => void;
   setSceneDuration: (durationMs: number) => void;
@@ -104,6 +131,12 @@ export const useDocumentStore = create<DocumentState>()(
           activeSceneDraft(s.project).objects.push(object);
         }),
 
+      addImportedModels: (assets, objects) =>
+        set((s) => {
+          for (const asset of assets) s.project.assets[asset.id] = asset;
+          activeSceneDraft(s.project).objects.push(...objects);
+        }),
+
       addObjects: (objects) =>
         set((s) => {
           activeSceneDraft(s.project).objects.push(...objects);
@@ -113,6 +146,17 @@ export const useDocumentStore = create<DocumentState>()(
         set((s) => {
           const scene = activeSceneDraft(s.project);
           const remove = new Set(ids);
+          // Cascade: deleting a group deletes its descendants.
+          let grew = true;
+          while (grew) {
+            grew = false;
+            for (const o of scene.objects) {
+              if (o.parentId && remove.has(o.parentId) && !remove.has(o.id)) {
+                remove.add(o.id);
+                grew = true;
+              }
+            }
+          }
           scene.objects = scene.objects.filter((o) => !remove.has(o.id));
         }),
 
@@ -144,6 +188,70 @@ export const useDocumentStore = create<DocumentState>()(
         set((s) => {
           const obj = findObject(s.project, id);
           if (obj) obj.material = { ...obj.material, ...patch };
+        }),
+
+      patchObjectsTransform: (ids, patch) =>
+        set((s) => {
+          const set_ = new Set(ids);
+          for (const o of activeSceneDraft(s.project).objects) {
+            if (set_.has(o.id)) o.transform = { ...o.transform, ...patch };
+          }
+        }),
+
+      setObjectsTransformComponent: (ids, field, axis, value) =>
+        set((s) => {
+          const set_ = new Set(ids);
+          for (const o of activeSceneDraft(s.project).objects) {
+            if (set_.has(o.id)) {
+              const next = [...o.transform[field]] as [number, number, number];
+              next[axis] = value;
+              o.transform = { ...o.transform, [field]: next };
+            }
+          }
+        }),
+
+      setObjectsMaterial: (ids, patch) =>
+        set((s) => {
+          const set_ = new Set(ids);
+          for (const o of activeSceneDraft(s.project).objects) {
+            if (set_.has(o.id)) o.material = { ...o.material, ...patch };
+          }
+        }),
+
+      setObjectsVisible: (ids, visible) =>
+        set((s) => {
+          const set_ = new Set(ids);
+          for (const o of activeSceneDraft(s.project).objects) {
+            if (set_.has(o.id)) o.visible = visible;
+          }
+        }),
+
+      groupObjects: (group, childIds, localPositions) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          scene.objects.push(group);
+          const set_ = new Set(childIds);
+          for (const o of scene.objects) {
+            if (set_.has(o.id)) {
+              o.parentId = group.id;
+              const lp = localPositions[o.id];
+              if (lp) o.transform.position = lp;
+            }
+          }
+        }),
+
+      ungroupObjects: (groupId, childUpdates) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          const byId = new Map(childUpdates.map((u) => [u.id, u]));
+          for (const o of scene.objects) {
+            const u = byId.get(o.id);
+            if (u) {
+              o.parentId = u.parentId;
+              o.transform = u.transform;
+            }
+          }
+          scene.objects = scene.objects.filter((o) => o.id !== groupId);
         }),
 
       setSceneName: (name) =>

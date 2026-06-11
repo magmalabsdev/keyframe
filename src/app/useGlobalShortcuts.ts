@@ -3,6 +3,7 @@ import { undo, redo } from '../state/documentStore';
 import { useEditorStore, type Tool } from '../state/editorStore';
 import { keyframeSelection } from '../animation/transformEdit';
 import { saveNow } from '../io/persistence';
+import { groupSelection, ungroupSelection } from '../scene/grouping';
 import {
   copySelection,
   cutSelection,
@@ -50,6 +51,12 @@ export function useGlobalShortcuts(): void {
         if (k === 's') {
           e.preventDefault();
           void saveNow();
+          return;
+        }
+        if (k === 'g') {
+          e.preventDefault();
+          if (e.shiftKey) ungroupSelection();
+          else groupSelection();
           return;
         }
         // Let native editing shortcuts work inside text fields.
