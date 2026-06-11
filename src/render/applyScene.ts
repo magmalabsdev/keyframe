@@ -1,10 +1,7 @@
 import * as THREE from 'three';
 import type { Scene } from '../state/types';
-import {
-  evaluateCamera,
-  evaluateObject,
-  isObjectActive,
-} from '../animation/evaluate';
+import { evaluateCamera } from '../animation/evaluate';
+import { poseObjectAtTime } from '../animation/pose';
 
 const d2r = THREE.MathUtils.degToRad;
 
@@ -23,11 +20,22 @@ export function applySceneAtTime(
   for (const obj of sceneData.objects) {
     const mesh = threeScene.getObjectByName(obj.id);
     if (!mesh) continue;
-    mesh.visible = obj.visible && isObjectActive(obj, timeMs);
-    const t = evaluateObject(obj, timeMs);
-    mesh.position.set(t.position[0], t.position[1], t.position[2]);
-    mesh.rotation.set(d2r(t.rotation[0]), d2r(t.rotation[1]), d2r(t.rotation[2]));
-    mesh.scale.set(t.scale[0], t.scale[1], t.scale[2]);
+    const p = poseObjectAtTime(obj, timeMs);
+    mesh.visible = p.visible;
+    mesh.position.set(p.position[0], p.position[1], p.position[2]);
+    mesh.rotation.set(d2r(p.rotation[0]), d2r(p.rotation[1]), d2r(p.rotation[2]));
+    mesh.scale.set(p.scale[0], p.scale[1], p.scale[2]);
+    if (obj.assetId) {
+      const inner = threeScene.getObjectByName(`${obj.id}__mesh`) as
+        | THREE.Mesh
+        | undefined;
+      const mat = inner?.material as THREE.MeshStandardMaterial | undefined;
+      if (mat) {
+        const opacity = obj.material.opacity * p.opacityMul;
+        mat.opacity = opacity;
+        mat.transparent = opacity < 1;
+      }
+    }
   }
 
   if (sceneData.camera.keyframes.length > 0) {

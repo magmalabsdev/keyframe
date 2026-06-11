@@ -42,6 +42,7 @@ export function Timeline() {
   const setKeyframeTime = useDocumentStore((s) => s.setKeyframeTime);
   const removeKeyframe = useDocumentStore((s) => s.removeKeyframe);
   const setObjectLifetime = useDocumentStore((s) => s.setObjectLifetime);
+  const remapKeyframeTimes = useDocumentStore((s) => s.remapKeyframeTimes);
 
   const selectedObject = useObject(
     selectedIds.length === 1 ? selectedIds[0] : undefined,
@@ -137,6 +138,19 @@ export function Timeline() {
                   removeKeyframe(selectedObject.id, kfId)
                 }
                 onLifetime={(life) => setObjectLifetime(selectedObject.id, life)}
+                onResizeEnd={(oldLife, scale) => {
+                  const obj = useDocumentStore.getState().project.scenes
+                    .find((sc) => sc.id === scene.id)
+                    ?.objects.find((o) => o.id === selectedObject.id);
+                  if (obj) {
+                    remapKeyframeTimes(
+                      selectedObject.id,
+                      oldLife,
+                      obj.lifetime,
+                      scale ? 'scale' : 'boundary',
+                    );
+                  }
+                }}
                 timeAt={timeAt}
                 tracksRef={tracksRef}
               />
@@ -190,6 +204,7 @@ function ObjectLane({
   onMoveKeyframe,
   onDeleteKeyframe,
   onLifetime,
+  onResizeEnd,
   timeAt,
   tracksRef,
 }: {
@@ -200,6 +215,10 @@ function ObjectLane({
   onMoveKeyframe: (kfId: string, clientX: number) => void;
   onDeleteKeyframe: (kfId: string) => void;
   onLifetime: (life: { startMs: number; endMs: number }) => void;
+  onResizeEnd: (
+    oldLife: { startMs: number; endMs: number },
+    scale: boolean,
+  ) => void;
   timeAt: (clientX: number, rect: DOMRect) => number;
   tracksRef: React.RefObject<HTMLDivElement>;
 }) {
@@ -210,6 +229,7 @@ function ObjectLane({
     const rect = tracksRef.current!.getBoundingClientRect();
     const startLife = { ...object.lifetime };
     const grabTime = timeAt(e.clientX, rect);
+    const scale = e.shiftKey;
     const move = (clientX: number) => {
       const t = timeAt(clientX, rect);
       if (which === 'start') onLifetime({ startMs: t, endMs: startLife.endMs });
@@ -225,6 +245,8 @@ function ObjectLane({
     const up = () => {
       window.removeEventListener('pointermove', m);
       window.removeEventListener('pointerup', up);
+      // Resizing an end remaps keyframes (move boundary, or scale all with Shift).
+      if (which !== 'body') onResizeEnd(startLife, scale);
     };
     const m = (ev: PointerEvent) => move(ev.clientX);
     window.addEventListener('pointermove', m);

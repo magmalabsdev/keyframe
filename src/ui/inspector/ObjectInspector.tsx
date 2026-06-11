@@ -2,11 +2,22 @@ import { useDocumentStore } from '../../state/documentStore';
 import { useEditorStore } from '../../state/editorStore';
 import { evaluateObject } from '../../animation/evaluate';
 import { applyTransformEdit, addKeyframeAtPlayhead } from '../../animation/transformEdit';
-import type { Easing, SceneObject } from '../../state/types';
-import { ColorField, Row, Section, Slider, Vec3Field } from './fields';
+import {
+  defaultIdle,
+  defaultTransition,
+  type Easing,
+  type IdleType,
+  type SceneObject,
+  type TransitionType,
+} from '../../state/types';
+import { commitCenterOfRotation } from '../../viewport/PivotHandle';
+import { getR3F } from '../../render/renderApi';
+import { ColorField, NumberField, Row, Section, Slider, Vec3Field } from './fields';
 import styles from './inspector.module.css';
 
 const EASINGS: Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'step'];
+const IDLE_TYPES: IdleType[] = ['none', 'rotate', 'flicker', 'pulse', 'wiggle'];
+const TRANSITION_TYPES: TransitionType[] = ['none', 'pop', 'fade', 'digital', 'flicker'];
 
 export function ObjectInspector({ object }: { object: SceneObject }) {
   const setObjectName = useDocumentStore((s) => s.setObjectName);
@@ -14,10 +25,17 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
   const setMaterial = useDocumentStore((s) => s.setObjectMaterial);
   const removeKeyframe = useDocumentStore((s) => s.removeKeyframe);
   const setKeyframeInterpolation = useDocumentStore((s) => s.setKeyframeInterpolation);
+  const setObjectIdle = useDocumentStore((s) => s.setObjectIdle);
+  const setObjectTransition = useDocumentStore((s) => s.setObjectTransition);
   const playheadMs = useEditorStore((s) => s.playheadMs);
   const setPlayhead = useEditorStore((s) => s.setPlayhead);
+  const corEditId = useEditorStore((s) => s.corEditId);
+  const setCorEditId = useEditorStore((s) => s.setCorEditId);
 
   const { id, material } = object;
+  const idle = object.idle ?? defaultIdle();
+  const startAnim = object.startAnim ?? defaultTransition();
+  const endAnim = object.endAnim ?? defaultTransition();
   // Show the pose at the current playhead so edits reflect (and update) keyframes.
   const t = evaluateObject(object, playheadMs);
   const animated = object.keyframes.length > 0;
@@ -61,6 +79,22 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
             onCommit={(v) => applyTransformEdit(id, { ...t, scale: v })}
           />
         </Row>
+        <button
+          className={styles.fullBtn}
+          onClick={() => {
+            if (corEditId === id) {
+              const scene = getR3F()?.scene;
+              if (scene) commitCenterOfRotation(id, scene);
+              setCorEditId(null);
+            } else {
+              setCorEditId(id);
+            }
+          }}
+        >
+          {corEditId === id
+            ? '✓ Set center of rotation'
+            : '⊕ Move center of rotation'}
+        </button>
       </Section>
 
       {!isGroup && (
@@ -90,6 +124,108 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
               onChange={(v) => setMaterial(id, { roughness: v })}
             />
           </Row>
+        </Section>
+      )}
+
+      {!isGroup && (
+        <Section title="Animations">
+          <Row label="Idle">
+            <select
+              className={styles.fullSelect}
+              value={idle.type}
+              onChange={(e) =>
+                setObjectIdle(id, { type: e.target.value as IdleType })
+              }
+            >
+              {IDLE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </Row>
+          {idle.type !== 'none' && (
+            <Row label="Speed">
+              <Slider
+                value={Math.min(1, idle.speed / 4)}
+                onChange={(v) => setObjectIdle(id, { speed: v * 4 })}
+                display={() => `${idle.speed.toFixed(1)}×`}
+              />
+            </Row>
+          )}
+          {idle.type === 'rotate' && (
+            <Row label="Axis">
+              <select
+                className={styles.fullSelect}
+                value={idle.axis}
+                onChange={(e) =>
+                  setObjectIdle(id, { axis: e.target.value as 'x' | 'y' | 'z' })
+                }
+              >
+                <option value="x">X</option>
+                <option value="y">Y</option>
+                <option value="z">Z</option>
+              </select>
+            </Row>
+          )}
+
+          <Row label="Start">
+            <select
+              className={styles.fullSelect}
+              value={startAnim.type}
+              onChange={(e) =>
+                setObjectTransition(id, 'start', {
+                  type: e.target.value as TransitionType,
+                })
+              }
+            >
+              {TRANSITION_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </Row>
+          {startAnim.type !== 'none' && (
+            <Row label="In time">
+              <NumberField
+                value={startAnim.durationMs / 1000}
+                suffix="s"
+                onCommit={(v) =>
+                  setObjectTransition(id, 'start', { durationMs: v * 1000 })
+                }
+              />
+            </Row>
+          )}
+
+          <Row label="End">
+            <select
+              className={styles.fullSelect}
+              value={endAnim.type}
+              onChange={(e) =>
+                setObjectTransition(id, 'end', {
+                  type: e.target.value as TransitionType,
+                })
+              }
+            >
+              {TRANSITION_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </Row>
+          {endAnim.type !== 'none' && (
+            <Row label="Out time">
+              <NumberField
+                value={endAnim.durationMs / 1000}
+                suffix="s"
+                onCommit={(v) =>
+                  setObjectTransition(id, 'end', { durationMs: v * 1000 })
+                }
+              />
+            </Row>
+          )}
         </Section>
       )}
 

@@ -59,6 +59,35 @@ export interface Lifetime {
   endMs: number;
 }
 
+export type IdleType = 'none' | 'rotate' | 'flicker' | 'pulse' | 'wiggle';
+export type TransitionType = 'none' | 'pop' | 'fade' | 'digital' | 'flicker';
+
+/** Idle animation that runs for the object's whole lifetime. */
+export interface IdleAnimation {
+  type: IdleType;
+  /** Speed multiplier (1 = default). */
+  speed: number;
+  /** Axis for the rotate idle ('z' default). */
+  axis: 'x' | 'y' | 'z';
+}
+
+/** Start / end transition animation (plays at the lifetime edges). */
+export interface Transition {
+  type: TransitionType;
+  /** Duration of the transition in ms. */
+  durationMs: number;
+}
+
+export const defaultIdle = (): IdleAnimation => ({
+  type: 'none',
+  speed: 1,
+  axis: 'z',
+});
+export const defaultTransition = (): Transition => ({
+  type: 'none',
+  durationMs: 500,
+});
+
 export interface SceneObject {
   id: string;
   name: string;
@@ -74,6 +103,11 @@ export interface SceneObject {
   /** Center of rotation, expressed as a local offset from the object origin. */
   centerOfRotation: Vec3;
   material: Material;
+  /** Idle animation over the whole lifetime (optional for back-compat). */
+  idle?: IdleAnimation;
+  /** Start / end transition animations (optional for back-compat). */
+  startAnim?: Transition;
+  endAnim?: Transition;
 }
 
 export interface CameraState {

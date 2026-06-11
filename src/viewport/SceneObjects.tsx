@@ -4,6 +4,8 @@ import { useEditorStore } from '../state/editorStore';
 import { getGeometry } from '../io/geometryCache';
 import { selectExact, selectInScene } from '../scene/grouping';
 import { childrenOf } from '../scene/tree';
+import { placeObjectFaceDown } from '../scene/placeOnFace';
+import { useFreedrag, consumeJustDragged } from './useFreedrag';
 import type { SceneObject } from '../state/types';
 
 const d2r = THREE.MathUtils.degToRad;
@@ -12,38 +14,53 @@ function ObjectMesh({ obj, selected }: { obj: SceneObject; selected: boolean }) 
   const asset = useDocumentStore((s) =>
     obj.assetId ? s.project.assets[obj.assetId] : undefined,
   );
+  const onFreedragDown = useFreedrag(obj.id);
 
   if (!obj.visible || !asset) return null;
 
   const geometry = getGeometry(asset);
-  const { position, rotation, scale } = obj.transform;
+  const { rotation, scale } = obj.transform;
+  const cor = obj.centerOfRotation;
   const { color, opacity, metalness, roughness } = obj.material;
 
   return (
-    <mesh
+    <group
       name={obj.id}
-      geometry={geometry}
-      position={position}
+      position={obj.transform.position}
       rotation={[d2r(rotation[0]), d2r(rotation[1]), d2r(rotation[2])]}
       scale={scale}
-      onClick={(e) => {
-        if (e.button !== 0) return;
-        e.stopPropagation();
-        // Single click selects the whole group; double-click drills to the child.
-        if (e.detail >= 2) selectExact(obj.id);
-        else selectInScene(obj.id, e.shiftKey);
-      }}
     >
-      <meshStandardMaterial
-        color={color}
-        transparent={opacity < 1}
-        opacity={opacity}
-        metalness={metalness}
-        roughness={roughness}
-        emissive={selected ? '#2554c7' : '#000000'}
-        emissiveIntensity={selected ? 0.45 : 0}
-      />
-    </mesh>
+      {/* Geometry offset by centerOfRotation so the group origin is the pivot. */}
+      <mesh
+        name={`${obj.id}__mesh`}
+        geometry={geometry}
+        position={cor}
+        onPointerDown={onFreedragDown}
+        onClick={(e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          if (consumeJustDragged()) return; // a freedrag just happened
+          const tool = useEditorStore.getState().activeTool;
+          if (tool === 'place' && e.face && e.object.parent) {
+            placeObjectFaceDown(obj.id, e.object.parent, e.face.normal);
+            return;
+          }
+          // Single click selects the whole group; double-click drills to child.
+          if (e.detail >= 2) selectExact(obj.id);
+          else selectInScene(obj.id, e.shiftKey);
+        }}
+      >
+        <meshStandardMaterial
+          color={color}
+          transparent={opacity < 1}
+          opacity={opacity}
+          metalness={metalness}
+          roughness={roughness}
+          emissive={selected ? '#2554c7' : '#000000'}
+          emissiveIntensity={selected ? 0.45 : 0}
+        />
+      </mesh>
+    </group>
   );
 }
 

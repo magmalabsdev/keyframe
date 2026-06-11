@@ -8,6 +8,10 @@ import { restoreAutosave, saveNow } from '../io/persistence';
 import { getCameraState } from '../viewport/cameraApi';
 import { getR3F } from '../render/renderApi';
 import { groupSelection, ungroupSelection } from '../scene/grouping';
+import { placeObjectFaceDown } from '../scene/placeOnFace';
+import { trySnap } from '../scene/snapping';
+import { commitCenterOfRotation } from '../viewport/PivotHandle';
+import { poseObjectAtTime } from '../animation/pose';
 
 /**
  * Dev-only hooks exposed on window.__kf for automated verification scripts.
@@ -28,5 +32,9 @@ export function installDevtools(): void {
     getR3F,
     groupSelection,
     ungroupSelection,
+    placeObjectFaceDown,
+    trySnap,
+    commitCenterOfRotation,
+    poseObjectAtTime,
   };
 }

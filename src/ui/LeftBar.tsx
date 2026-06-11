@@ -86,6 +86,10 @@ export function LeftBar() {
   const scenes = useDocumentStore((s) => s.project.scenes);
   const activeScene = useActiveScene();
   const setActiveScene = useDocumentStore((s) => s.setActiveScene);
+  const addScene = useDocumentStore((s) => s.addScene);
+  const removeScene = useDocumentStore((s) => s.removeScene);
+  const renameScene = useDocumentStore((s) => s.renameScene);
+  const duplicateScene = useDocumentStore((s) => s.duplicateScene);
   const selectedIds = useEditorStore((s) => s.selectedIds);
 
   const fileInput = useRef<HTMLInputElement>(null);
@@ -108,18 +112,46 @@ export function LeftBar() {
   return (
     <div className={styles.bar}>
       <section className={styles.section}>
-        <div className={styles.sectionHead}>Scenes</div>
-        <select
-          className={styles.sceneSelect}
-          value={activeScene.id}
-          onChange={(e) => setActiveScene(e.target.value)}
-        >
+        <div className={styles.sectionHead}>
+          <span>Scenes</span>
+          <div className={styles.headActions}>
+            <button className={styles.importBtn} onClick={duplicateScene} title="Duplicate scene">
+              Duplicate
+            </button>
+            <button className={styles.importBtn} onClick={addScene} title="New scene">
+              + Scene
+            </button>
+          </div>
+        </div>
+        <div className={styles.sceneList}>
           {scenes.map((scene) => (
-            <option key={scene.id} value={scene.id}>
-              {scene.name}
-            </option>
+            <div
+              key={scene.id}
+              className={`${styles.sceneRow} ${
+                scene.id === activeScene.id ? styles.selected : ''
+              }`}
+              onPointerDown={() => setActiveScene(scene.id)}
+              onDoubleClick={() => {
+                const name = prompt('Rename scene', scene.name);
+                if (name) renameScene(scene.id, name);
+              }}
+            >
+              <span className={styles.objectName}>{scene.name}</span>
+              {scenes.length > 1 && (
+                <button
+                  className={styles.delete}
+                  title="Delete scene"
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete "${scene.name}"?`)) removeScene(scene.id);
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
           ))}
-        </select>
+        </div>
       </section>
 
       <section className={`${styles.section} ${styles.grow}`}>

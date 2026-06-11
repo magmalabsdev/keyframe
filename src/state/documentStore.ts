@@ -3,11 +3,13 @@ import { useStore } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { temporal } from 'zundo';
 import { nanoid } from 'nanoid';
-import { createDefaultProject } from './defaults';
+import { current } from 'immer';
+import { createDefaultProject, createDefaultScene } from './defaults';
 import type {
   Asset,
   CameraState,
   Easing,
+  IdleAnimation,
   Lifetime,
   Material,
   Project,
@@ -15,7 +17,10 @@ import type {
   SceneObject,
   SceneSettings,
   Transform,
+  Transition,
+  Vec3,
 } from './types';
+import { defaultIdle, defaultTransition } from './types';
 
 /** Two keyframes within this many ms are treated as the same time slot. */
 const KEYFRAME_EPSILON = 1;
@@ -42,6 +47,13 @@ export interface DocumentState {
   /** Merge a partial transform (used by inspector fields). */
   patchObjectTransform: (id: string, patch: Partial<Transform>) => void;
   setObjectMaterial: (id: string, patch: Partial<Material>) => void;
+  setObjectIdle: (id: string, patch: Partial<IdleAnimation>) => void;
+  setObjectTransition: (
+    id: string,
+    which: 'start' | 'end',
+    patch: Partial<Transition>,
+  ) => void;
+  setObjectCenterOfRotation: (id: string, center: Vec3) => void;
 
   /** Batch edits across several objects in one undo step (multi-select). */
   patchObjectsTransform: (ids: string[], patch: Partial<Transform>) => void;
@@ -71,6 +83,19 @@ export interface DocumentState {
   setSceneName: (name: string) => void;
   setSceneDuration: (durationMs: number) => void;
   patchSceneSettings: (patch: Partial<SceneSettings>) => void;
+
+  addScene: () => void;
+  removeScene: (sceneId: string) => void;
+  renameScene: (sceneId: string, name: string) => void;
+  duplicateScene: () => void;
+
+  /** Remap an object's keyframe times when its lifetime is resized. */
+  remapKeyframeTimes: (
+    objectId: string,
+    oldRange: Lifetime,
+    newRange: Lifetime,
+    mode: 'boundary' | 'scale',
+  ) => void;
 
   /** Create or update a keyframe at the given time for an object. */
   upsertKeyframe: (
@@ -190,6 +215,26 @@ export const useDocumentStore = create<DocumentState>()(
           if (obj) obj.material = { ...obj.material, ...patch };
         }),
 
+      setObjectIdle: (id, patch) =>
+        set((s) => {
+          const obj = findObject(s.project, id);
+          if (obj) obj.idle = { ...(obj.idle ?? defaultIdle()), ...patch };
+        }),
+
+      setObjectTransition: (id, which, patch) =>
+        set((s) => {
+          const obj = findObject(s.project, id);
+          if (!obj) return;
+          const key = which === 'start' ? 'startAnim' : 'endAnim';
+          obj[key] = { ...(obj[key] ?? defaultTransition()), ...patch };
+        }),
+
+      setObjectCenterOfRotation: (id, center) =>
+        set((s) => {
+          const obj = findObject(s.project, id);
+          if (obj) obj.centerOfRotation = center;
+        }),
+
       patchObjectsTransform: (ids, patch) =>
         set((s) => {
           const set_ = new Set(ids);
@@ -268,6 +313,64 @@ export const useDocumentStore = create<DocumentState>()(
         set((s) => {
           const scene = activeSceneDraft(s.project);
           scene.settings = { ...scene.settings, ...patch };
+        }),
+
+      addScene: () =>
+        set((s) => {
+          const scene = createDefaultScene(`Scene ${s.project.scenes.length + 1}`);
+          s.project.scenes.push(scene);
+          s.project.activeSceneId = scene.id;
+        }),
+
+      removeScene: (sceneId) =>
+        set((s) => {
+          if (s.project.scenes.length <= 1) return;
+          s.project.scenes = s.project.scenes.filter((sc) => sc.id !== sceneId);
+          if (s.project.activeSceneId === sceneId) {
+            s.project.activeSceneId = s.project.scenes[0].id;
+          }
+        }),
+
+      renameScene: (sceneId, name) =>
+        set((s) => {
+          const sc = s.project.scenes.find((x) => x.id === sceneId);
+          if (sc) sc.name = name;
+        }),
+
+      duplicateScene: () =>
+        set((s) => {
+          const clone = structuredClone(current(activeSceneDraft(s.project))) as Scene;
+          clone.id = nanoid();
+          clone.name = `${clone.name} copy`;
+          const idMap = new Map<string, string>();
+          for (const o of clone.objects) idMap.set(o.id, nanoid());
+          for (const o of clone.objects) {
+            o.id = idMap.get(o.id)!;
+            if (o.parentId && idMap.has(o.parentId)) o.parentId = idMap.get(o.parentId)!;
+            for (const k of o.keyframes) k.id = nanoid();
+          }
+          for (const k of clone.camera.keyframes) k.id = nanoid();
+          s.project.scenes.push(clone);
+          s.project.activeSceneId = clone.id;
+        }),
+
+      remapKeyframeTimes: (objectId, oldRange, newRange, mode) =>
+        set((s) => {
+          const obj = findObject(s.project, objectId);
+          if (!obj || obj.keyframes.length === 0) return;
+          const oldSpan = oldRange.endMs - oldRange.startMs || 1;
+          const newSpan = newRange.endMs - newRange.startMs;
+          for (const k of obj.keyframes) {
+            if (mode === 'scale') {
+              k.timeMs =
+                newRange.startMs + (k.timeMs - oldRange.startMs) * (newSpan / oldSpan);
+            } else if (Math.abs(k.timeMs - oldRange.startMs) <= 1) {
+              k.timeMs = newRange.startMs;
+            } else if (Math.abs(k.timeMs - oldRange.endMs) <= 1) {
+              k.timeMs = newRange.endMs;
+            }
+          }
+          obj.keyframes.sort((a, b) => a.timeMs - b.timeMs);
         }),
 
       upsertKeyframe: (objectId, timeMs, transform, interpolation = 'linear') =>

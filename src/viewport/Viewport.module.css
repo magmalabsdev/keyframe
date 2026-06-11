@@ -16,6 +16,14 @@
   border-radius: var(--radius-sm);
 }
 
+.marquee {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: rgba(76, 139, 245, 0.15);
+  pointer-events: none;
+  z-index: 6;
+}
+
 .renderHud {
   position: absolute;
   top: 12px;

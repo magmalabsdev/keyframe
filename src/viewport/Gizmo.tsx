@@ -39,8 +39,11 @@ export function Gizmo() {
     };
   }, []);
 
-  // Hide the gizmo during a clean render preview / video export.
-  if (hidden || tool === 'select' || selectedIds.length !== 1) return null;
+  // Hide the gizmo during a clean render preview / video export, and for the
+  // select / place tools (place uses raw face clicks).
+  if (hidden || tool === 'select' || tool === 'place' || selectedIds.length !== 1) {
+    return null;
+  }
   const targetId = selectedIds[0];
   const target = scene.getObjectByName(targetId);
   if (!target) return null;

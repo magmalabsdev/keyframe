@@ -58,6 +58,26 @@
   margin: 0 12px 10px;
 }
 
+.sceneList {
+  padding: 2px 6px 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.sceneRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sceneRow:hover {
+  background: var(--panel-2);
+}
+.sceneRow.selected {
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+}
+
 .objectList {
   flex: 1;
   overflow-y: auto;

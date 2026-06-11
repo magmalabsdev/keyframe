@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type Tool = 'select' | 'move' | 'scale' | 'rotate';
+export type Tool = 'select' | 'move' | 'scale' | 'rotate' | 'place';
 export type SaveStatus = 'idle' | 'saving' | 'saved';
 
 /**
@@ -20,6 +20,10 @@ export interface EditorState {
   exportProgress: number | null;
   /** True while previewing a clean render (build plate/gizmo/overlays hidden). */
   renderPreview: boolean;
+  /** Whether face-to-face object snapping is active while moving. */
+  snapEnabled: boolean;
+  /** Object whose center of rotation is being edited (shows a pivot handle). */
+  corEditId: string | null;
 
   setSelection: (ids: string[]) => void;
   toggleSelection: (id: string, additive: boolean) => void;
@@ -31,6 +35,8 @@ export interface EditorState {
   setSaveStatus: (status: SaveStatus) => void;
   setExportProgress: (progress: number | null) => void;
   setRenderPreview: (on: boolean) => void;
+  setSnapEnabled: (on: boolean) => void;
+  setCorEditId: (id: string | null) => void;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -42,6 +48,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   saveStatus: 'idle',
   exportProgress: null,
   renderPreview: false,
+  snapEnabled: true,
+  corEditId: null,
 
   setSelection: (ids) => set({ selectedIds: ids }),
   toggleSelection: (id, additive) =>
@@ -61,4 +69,6 @@ export const useEditorStore = create<EditorState>((set) => ({
   setRenderPreview: (renderPreview) => set({ renderPreview }),
   setSaveStatus: (saveStatus) => set({ saveStatus }),
   setExportProgress: (exportProgress) => set({ exportProgress }),
+  setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
+  setCorEditId: (corEditId) => set({ corEditId }),
 }));

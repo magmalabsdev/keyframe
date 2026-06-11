@@ -234,6 +234,17 @@
   letter-spacing: 0;
 }
 
+.fullSelect {
+  width: 100%;
+  text-transform: capitalize;
+}
+
+.fullBtn {
+  width: 100%;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .kfList {
   display: flex;
   flex-direction: column;

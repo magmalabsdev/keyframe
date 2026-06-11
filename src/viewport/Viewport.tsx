@@ -8,18 +8,20 @@ import { CameraRig } from './CameraRig';
 import { SceneObjects } from './SceneObjects';
 import { Gizmo } from './Gizmo';
 import { AnimationSystem } from './AnimationSystem';
+import { PivotHandle } from './PivotHandle';
 import { ViewCube } from './ViewCube';
 import { registerCamera } from './cameraApi';
+import { useMarquee } from './useMarquee';
 import { RenderRegistrar } from '../render/RenderRegistrar';
 import { ViewportToolbar } from '../ui/ViewportToolbar';
 import styles from './Viewport.module.css';
 
 export function Viewport() {
   const scene = useActiveScene();
-  const clearSelection = useEditorStore((s) => s.clearSelection);
   const exportProgress = useEditorStore((s) => s.exportProgress);
   const renderPreview = useEditorStore((s) => s.renderPreview);
   const [dragOver, setDragOver] = useState(false);
+  const marquee = useMarquee();
 
   return (
     <div
@@ -47,9 +49,6 @@ export function Viewport() {
           camera.updateProjectionMatrix();
           registerCamera(camera);
         }}
-        onPointerMissed={(e) => {
-          if (e.button === 0) clearSelection();
-        }}
       >
         <color attach="background" args={[scene.settings.backgroundColor]} />
 
@@ -61,6 +60,7 @@ export function Viewport() {
         <BuildPlate />
         <SceneObjects />
         <Gizmo />
+        <PivotHandle />
         <AnimationSystem />
         <RenderRegistrar />
         <CameraRig />
@@ -71,6 +71,18 @@ export function Viewport() {
           <ViewCube />
           <ViewportToolbar />
         </>
+      )}
+
+      {marquee.rect && (
+        <div
+          className={styles.marquee}
+          style={{
+            left: marquee.rect.x,
+            top: marquee.rect.y,
+            width: marquee.rect.w,
+            height: marquee.rect.h,
+          }}
+        />
       )}
 
       {dragOver && (

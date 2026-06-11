@@ -33,6 +33,11 @@
   color: #fff;
 }
 
+.snap {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
 .glyph {
   width: 16px;
   text-align: center;

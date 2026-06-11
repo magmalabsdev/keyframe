@@ -27,6 +27,7 @@ const TOOL_KEYS: Record<string, Tool> = {
   '2': 'move',
   '3': 'scale',
   '4': 'rotate',
+  '5': 'place',
 };
 
 /** Registers the global keyboard shortcuts described in the spec. */
