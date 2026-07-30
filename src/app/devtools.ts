@@ -10,9 +10,16 @@ import { trySnap } from '../scene/snapping';
 import { commitCenterOfRotation } from '../viewport/PivotHandle';
 import { poseObjectAtTime } from '../animation/pose';
 import { createSurfaceOnFace } from '../scene/createSurfaceOnFace';
-import { getAudioBuffer, getReversedAudioBuffer } from '../io/audioCache';
+import {
+  decodeAudio,
+  getAudioBuffer,
+  getAudioContext,
+  getReversedAudioBuffer,
+  hasAudioBuffer,
+} from '../io/audioCache';
+import { putMedia } from '../io/mediaCache';
 import { getWaveformPeaks } from '../io/waveform';
-import { __debugAudioState } from '../render/audioEngine';
+import { __debugAudioState, __warmAudioForTest } from '../render/audioEngine';
 
 /**
  * Dev-only hooks exposed on window.__kf for automated verification scripts.
@@ -40,8 +47,13 @@ export function installDevtools(): void {
     poseObjectAtTime,
     createSurfaceOnFace,
     getAudioBuffer,
+    getAudioContext,
     getReversedAudioBuffer,
+    hasAudioBuffer,
+    decodeAudio,
+    putMedia,
     getWaveformPeaks,
     __debugAudioState,
+    warmAudio: __warmAudioForTest,
   };
 }

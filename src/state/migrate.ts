@@ -16,6 +16,7 @@ import {
   DEFAULT_FPS,
 } from './defaults';
 import { buildGeometry, putGeometry, putGeometryData } from '../io/geometryCache';
+import { normalizeAudioOverlaps } from './audioOverlap';
 
 /** Legacy asset shape: geometry stored inline as number[] (pre out-of-store). */
 interface LegacyGeometryData {
@@ -48,6 +49,14 @@ export function migrateProject(project: Project): Project {
   // v4 -> v5: audio tracks. Presence-based backfill so older files load.
   for (const scene of project.scenes) scene.audioTracks ??= [];
   for (const scene of project.scenes) scene.markers ??= [];
+  // Overlapping audio clips used to be allowed, and they make playback double
+  // up (one voice per clip, same source at two offsets). Heal any document
+  // saved before the no-overlap invariant existed.
+  for (const scene of project.scenes) {
+    for (const track of scene.audioTracks) {
+      track.clips = normalizeAudioOverlaps(track.clips);
+    }
+  }
   // Ambient fill light. Presence-based (not version-gated) and `??=` so a
   // scene deliberately dialed to 0 stays at 0 across reloads.
   for (const scene of project.scenes) {

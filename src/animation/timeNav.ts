@@ -27,13 +27,38 @@ export function snapToSecond(ms: number): number {
   return Math.round(ms / 1000) * 1000;
 }
 
-/** Constant screen-space "stickiness" for timeline drag snapping, in px. */
-export const TIMELINE_SNAP_PX = 8;
+/**
+ * Constant screen-space "stickiness" for timeline drag snapping, in px — the
+ * threshold is derived per-drag as `TIMELINE_SNAP_PX / pxPerMs`, so the magnet
+ * feels the same at every zoom level. For scale: at fit-to-width for a 5s scene
+ * on a ~1400px timeline (0.28 px/ms) that is ~43ms; at MAX_PX_PER_MS (5) it is
+ * 2.4ms, which is below half a frame — so at deep zoom frame snapping correctly
+ * stops being effectively-always-on and becomes a genuine 12px magnet.
+ */
+export const TIMELINE_SNAP_PX = 12;
 
 export interface TimelineSnapModes {
   second: boolean;
   frame: boolean;
   clip: boolean;
+}
+
+/**
+ * Snap candidates to leave out — always the item currently being dragged.
+ * Without this, a dragged item's own edges are candidates, they sit a fixed
+ * distance from the cursor, and clip snapping becomes a self-satisfying no-op
+ * that never pulls toward anything else.
+ */
+export interface SnapExclude {
+  /** Objects whose lifetime edges are dropped. Their keyframes are KEPT: a body
+   * drag doesn't move keyframes and an edge trim only remaps them on pointerup,
+   * so mid-drag they are legitimate stationary targets. */
+  objectIds?: string[];
+  /** Audio clips whose start and end are dropped. */
+  audioClipIds?: string[];
+  markerIds?: string[];
+  /** Exact times to drop (e.g. the live position of a dragged keyframe). */
+  times?: number[];
 }
 
 export function clampTime(ms: number, durationMs: number): number {
@@ -98,22 +123,35 @@ export function keyframeTimes(tracks: Tracks): number[] {
  * every object's tracks and the camera's tracks. Broad DaVinci-style
  * edit-point set, not just literal lifetime edges.
  */
-export function clipBoundaryTimes(scene: Scene): number[] {
+export function clipBoundaryTimes(scene: Scene, exclude?: SnapExclude): number[] {
+  const skipObj = new Set(exclude?.objectIds ?? []);
+  const skipClip = new Set(exclude?.audioClipIds ?? []);
+  const skipMarker = new Set(exclude?.markerIds ?? []);
+
   const set = new Set<number>();
   for (const obj of scene.objects) {
-    set.add(obj.lifetime.startMs);
-    set.add(obj.lifetime.endMs);
+    // Lifetime edges are excluded for a dragged object, but its keyframes stay.
+    if (!skipObj.has(obj.id)) {
+      set.add(obj.lifetime.startMs);
+      set.add(obj.lifetime.endMs);
+    }
     for (const t of keyframeTimes(obj.tracks)) set.add(t);
   }
   for (const t of keyframeTimes(scene.camera.tracks)) set.add(t);
   for (const track of scene.audioTracks ?? []) {
     for (const clip of track.clips) {
+      if (skipClip.has(clip.id)) continue;
       set.add(clip.startMs);
       set.add(clip.startMs + clip.durationMs);
     }
   }
-  for (const m of scene.markers ?? []) set.add(m.timeMs);
-  return [...set].sort((a, b) => a - b);
+  for (const m of scene.markers ?? []) {
+    if (!skipMarker.has(m.id)) set.add(m.timeMs);
+  }
+  const times = [...set].sort((a, b) => a - b);
+  const skipTimes = exclude?.times;
+  if (!skipTimes || skipTimes.length === 0) return times;
+  return times.filter((t) => !skipTimes.some((s) => Math.abs(s - t) < 1e-6));
 }
 
 /**
@@ -142,6 +180,10 @@ export function snapToNearest(
  * nearest-wins: every active mode contributes its nearest candidate, then we
  * take the globally closest of those. Returns `ms` unchanged if no mode is
  * active or nothing is within range.
+ *
+ * Because it is nearest-wins, enabling `frame` alongside `second` effectively
+ * hides `second`: the frame grid is never more than half a frame away, so it
+ * almost always beats the whole-second candidate. That is by design.
  */
 export function applyTimelineSnap(
   ms: number,
@@ -149,13 +191,16 @@ export function applyTimelineSnap(
   modes: TimelineSnapModes,
   fps: number,
   thresholdMs: number,
+  exclude?: SnapExclude,
 ): number {
   if (!modes.second && !modes.frame && !modes.clip) return ms;
   const candidates: number[] = [];
   if (modes.second) candidates.push(snapToSecond(ms));
   if (modes.frame) candidates.push(snapToFrame(ms, fps));
   if (modes.clip) {
-    const nearestClip = snapToNearest(ms, clipBoundaryTimes(scene), thresholdMs);
+    const nearestClip = snapToNearest(ms, clipBoundaryTimes(scene, exclude), thresholdMs);
+    // The `!== ms` guard is load-bearing: pushing `ms` itself would win at
+    // distance 0 and suppress the second/frame candidates.
     if (nearestClip !== ms) candidates.push(nearestClip);
   }
   return snapToNearest(ms, candidates, thresholdMs);

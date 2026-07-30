@@ -39,6 +39,7 @@ import type {
   Vec3,
 } from './types';
 import { defaultIdle, defaultTransition, MARKER_COLORS, TIME_VARIABLE } from './types';
+import { resolveOverlaps } from './audioOverlap';
 import { evaluateExpr, renameIdentifier, varsMap } from './expr';
 import { recomputeBindings, writeBoundValue } from './bindings';
 import { migrateProject } from './migrate';
@@ -216,8 +217,16 @@ export interface DocumentState {
   /** Add a placed clip to a track (kept sorted by start time). */
   addAudioClip: (trackId: string, clip: AudioClip) => void;
   removeAudioClip: (trackId: string, clipId: string) => void;
-  /** Move a clip along the timeline (drag body), keeping its trim/length. */
+  /** Move a clip along the timeline (drag body), keeping its trim/length.
+   * Transient overlaps are allowed — call `moveAudioClipResolved` on drop. */
   setAudioClipTime: (trackId: string, clipId: string, startMs: number) => void;
+  /**
+   * Final placement of a dragged clip plus overwrite-resolution of whatever it
+   * landed on, in one undo step. Called on pointerup rather than per
+   * pointermove: truncating continuously would repeatedly destroy the clip
+   * being swept across.
+   */
+  moveAudioClipResolved: (trackId: string, clipId: string, startMs: number) => void;
   /**
    * Set a clip's placement + trim in one step (drag either edge). `startMs`
    * defaults to the current start. All fields are clamped to the source length.
@@ -262,6 +271,51 @@ function findAudioTrack(project: Project, trackId: string): AudioTrack | undefin
   const scene = activeSceneDraft(project);
   scene.audioTracks ??= [];
   return scene.audioTracks.find((t) => t.id === trackId);
+}
+
+/**
+ * Enforces the no-overlap invariant on one audio track after `keepClipId` was
+ * placed: overwrite semantics, so whatever it landed on is trimmed, removed, or
+ * split. Mutates the draft in place, so the caller's single `set()` stays one
+ * undo entry no matter how many clips are touched.
+ */
+function applyOverlapResolution(track: AudioTrack, keepClipId: string): void {
+  const moved = track.clips.find((c) => c.id === keepClipId);
+  if (!moved) return;
+  // Snapshot before mutating: an interior split needs the pre-mutation clip both
+  // to update it and to clone its tail.
+  const others = track.clips.filter((c) => c.id !== keepClipId).map((c) => current(c));
+  const res = resolveOverlaps(
+    { id: moved.id, startMs: moved.startMs, durationMs: moved.durationMs },
+    others,
+  );
+  if (res.removeIds.length === 0 && res.updates.length === 0 && res.inserts.length === 0) {
+    return;
+  }
+  const byId = new Map(others.map((c) => [c.id, c]));
+  for (const u of res.updates) {
+    const target = track.clips.find((c) => c.id === u.id);
+    if (target) {
+      target.startMs = u.startMs;
+      target.offsetMs = u.offsetMs;
+      target.durationMs = u.durationMs;
+    }
+  }
+  if (res.removeIds.length > 0) {
+    track.clips = track.clips.filter((c) => !res.removeIds.includes(c.id));
+  }
+  for (const ins of res.inserts) {
+    const src = byId.get(ins.sourceId);
+    if (!src) continue;
+    track.clips.push({
+      ...src,
+      id: nanoid(),
+      startMs: ins.startMs,
+      offsetMs: ins.offsetMs,
+      durationMs: ins.durationMs,
+    });
+  }
+  track.clips.sort((a, b) => a.startMs - b.startMs);
 }
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
@@ -861,7 +915,8 @@ export const useDocumentStore = create<DocumentState>()(
           }
 
           // Audio clips only split in the batch case — a single selected
-          // object's split is scoped to that object alone.
+          // object's split is scoped to that object alone. No overlap
+          // resolution needed: the two halves are butt-joined, which is legal.
           if (selectedIds.length !== 1) {
             for (const track of scene.audioTracks ?? []) {
               for (const clip of [...track.clips]) {
@@ -953,6 +1008,8 @@ export const useDocumentStore = create<DocumentState>()(
           const clone: AudioClip = { ...c, id: nanoid(), startMs: c.startMs + c.durationMs };
           t.clips.push(clone);
           t.clips.sort((a, b) => a.startMs - b.startMs);
+          // The slot after the original may already be occupied; the clone wins.
+          applyOverlapResolution(t, clone.id);
         }),
 
       upsertCameraKeyframe: (timeMs, state, interpolation = 'linear') =>
@@ -1080,6 +1137,8 @@ export const useDocumentStore = create<DocumentState>()(
           if (!t) return;
           t.clips.push(clip);
           t.clips.sort((a, b) => a.startMs - b.startMs);
+          // Importing at the playhead can land on an occupied slot.
+          applyOverlapResolution(t, clip.id);
         }),
       removeAudioClip: (trackId, clipId) =>
         set((s) => {
@@ -1094,18 +1153,46 @@ export const useDocumentStore = create<DocumentState>()(
           c.startMs = Math.max(0, startMs);
           t.clips.sort((a, b) => a.startMs - b.startMs);
         }),
+      moveAudioClipResolved: (trackId, clipId, startMs) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          const c = t?.clips.find((x) => x.id === clipId);
+          if (!t || !c) return;
+          c.startMs = Math.max(0, startMs);
+          t.clips.sort((a, b) => a.startMs - b.startMs);
+          applyOverlapResolution(t, clipId);
+        }),
       setAudioClipRange: (trackId, clipId, range) =>
         set((s) => {
           const t = findAudioTrack(s.project, trackId);
           const c = t?.clips.find((x) => x.id === clipId);
           if (!t || !c) return;
-          // Clamp trim-in inside the source; a non-looping clip can't play past
+          // Trimming can never grow through a neighbour. Scans rather than
+          // adjacent-index lookups, so this is still correct on a legacy
+          // document that arrived with overlaps.
+          let minStart = 0;
+          let maxEnd = Infinity;
+          for (const x of t.clips) {
+            if (x.id === c.id) continue;
+            const xEnd = x.startMs + x.durationMs;
+            if (x.startMs < c.startMs) minStart = Math.max(minStart, xEnd);
+            else maxEnd = Math.min(maxEnd, x.startMs);
+          }
+          const requestedStart = range.startMs ?? c.startMs;
+          const startMs = Math.max(minStart, Math.max(0, requestedStart));
+          // Shift the trim-in by however far the left edge was clamped, so the
+          // audible content stays put under the edge.
+          const shift = startMs - requestedStart;
+          let offsetMs = range.offsetMs + shift;
+          let durationMs = range.durationMs - shift;
+          durationMs = Math.min(durationMs, maxEnd - startMs);
+          // Then the source-length clamps: a non-looping clip can't play past
           // the end of its source, so its duration is capped to the remainder.
-          const offsetMs = Math.max(0, Math.min(range.offsetMs, c.sourceDurationMs - 1));
+          offsetMs = Math.max(0, Math.min(offsetMs, c.sourceDurationMs - 1));
           const maxDur = c.loop ? Infinity : c.sourceDurationMs - offsetMs;
-          c.startMs = Math.max(0, range.startMs ?? c.startMs);
+          c.startMs = startMs;
           c.offsetMs = offsetMs;
-          c.durationMs = Math.max(1, Math.min(range.durationMs, maxDur));
+          c.durationMs = Math.max(1, Math.min(durationMs, maxDur));
           t.clips.sort((a, b) => a.startMs - b.startMs);
         }),
       setAudioClipGain: (trackId, clipId, gain) =>
@@ -1129,6 +1216,7 @@ export const useDocumentStore = create<DocumentState>()(
           const [clip] = from.clips.splice(idx, 1);
           to.clips.push(clip);
           to.clips.sort((a, b) => a.startMs - b.startMs);
+          applyOverlapResolution(to, clip.id);
         }),
 
       addVariable: () =>

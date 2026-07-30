@@ -12,6 +12,7 @@ import {
   snapToSecond,
   stepFrame,
   stepMs,
+  TIMELINE_SNAP_PX,
 } from './timeNav';
 import { createDefaultScene } from '../state/defaults';
 import type { Scene, Tracks } from '../state/types';
@@ -186,6 +187,52 @@ describe('clipBoundaryTimes', () => {
     ];
     expect(clipBoundaryTimes(scene)).toEqual([0, 1000]);
   });
+
+  it('excludes an object’s lifetime edges but keeps its keyframes', () => {
+    const scene = createDefaultScene();
+    scene.objects = [
+      {
+        ...scene.objects[0],
+        id: 'a',
+        lifetime: { startMs: 100, endMs: 900 },
+        tracks: { opacity: [kf(400)] },
+      },
+      { ...scene.objects[0], id: 'b', lifetime: { startMs: 2000, endMs: 3000 }, tracks: {} },
+    ];
+    // 100/900 gone; 400 (a's keyframe) and b's edges remain.
+    expect(clipBoundaryTimes(scene, { objectIds: ['a'] })).toEqual([400, 2000, 3000]);
+  });
+
+  it('excludes an audio clip’s own edges', () => {
+    const scene = createDefaultScene();
+    scene.objects = [];
+    const clip = (id: string, startMs: number, durationMs: number) => ({
+      id,
+      name: id,
+      mediaId: 'm1',
+      startMs,
+      offsetMs: 0,
+      durationMs,
+      sourceDurationMs: 5000,
+      gain: 1,
+      loop: false,
+    });
+    scene.audioTracks = [
+      { id: 't1', name: 'A', muted: false, gain: 1, clips: [clip('c1', 0, 500), clip('c2', 2000, 500)] },
+    ];
+    expect(clipBoundaryTimes(scene, { audioClipIds: ['c1'] })).toEqual([2000, 2500]);
+  });
+
+  it('excludes a marker by id and exact times', () => {
+    const scene = createDefaultScene();
+    scene.objects = [];
+    scene.markers = [
+      { id: 'mk1', timeMs: 500, name: 'M1', color: '#fff' },
+      { id: 'mk2', timeMs: 1500, name: 'M2', color: '#fff' },
+    ];
+    expect(clipBoundaryTimes(scene, { markerIds: ['mk1'] })).toEqual([1500]);
+    expect(clipBoundaryTimes(scene, { times: [1500] })).toEqual([500]);
+  });
 });
 
 describe('snapToNearest', () => {
@@ -240,5 +287,48 @@ describe('applyTimelineSnap', () => {
     expect(
       applyTimelineSnap(1019, scene, { second: false, frame: false, clip: true }, 30, 20),
     ).toBe(1000);
+  });
+
+  it('does not snap to an excluded (dragged) item’s own boundary', () => {
+    // The regression test for self-snap feedback: with the only clip candidate
+    // being the dragged object's own edge, snapping must be inert rather than
+    // pinning the drag to where it started.
+    const scene = createDefaultScene();
+    scene.objects = [
+      { ...scene.objects[0], id: 'a', lifetime: { startMs: 1000, endMs: 2000 }, tracks: {} },
+    ];
+    const modes = { second: false, frame: false, clip: true };
+    expect(applyTimelineSnap(1005, scene, modes, 30, 50)).toBe(1000); // without exclusion
+    expect(applyTimelineSnap(1005, scene, modes, 30, 50, { objectIds: ['a'] })).toBe(1005);
+  });
+
+  it('still snaps to the 1s grid when the clip candidate is excluded', () => {
+    // Guards the load-bearing `nearestClip !== ms` line: excluding the clip
+    // candidate must not suppress the second-grid candidate.
+    const scene = createDefaultScene();
+    scene.objects = [
+      { ...scene.objects[0], id: 'a', lifetime: { startMs: 1005, endMs: 2000 }, tracks: {} },
+    ];
+    const out = applyTimelineSnap(
+      1005,
+      scene,
+      { second: true, frame: false, clip: true },
+      30,
+      50,
+      { objectIds: ['a'] },
+    );
+    expect(out).toBe(1000);
+  });
+});
+
+describe('TIMELINE_SNAP_PX', () => {
+  it('is 12px of constant screen-space stickiness', () => {
+    expect(TIMELINE_SNAP_PX).toBe(12);
+  });
+
+  it('yields a sub-frame threshold at max zoom (a genuine 12px magnet)', () => {
+    const MAX_PX_PER_MS = 5;
+    expect(TIMELINE_SNAP_PX / MAX_PX_PER_MS).toBeCloseTo(2.4, 6);
+    expect(TIMELINE_SNAP_PX / MAX_PX_PER_MS).toBeLessThan(frameMsFor(30) / 2);
   });
 });

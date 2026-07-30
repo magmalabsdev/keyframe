@@ -11,7 +11,12 @@ import {
   useEditorStore,
 } from '../../state/editorStore';
 import { keyframeSelection } from '../../animation/transformEdit';
-import { applyTimelineSnap, keyframeTimes, TIMELINE_SNAP_PX } from '../../animation/timeNav';
+import {
+  applyTimelineSnap,
+  keyframeTimes,
+  TIMELINE_SNAP_PX,
+  type SnapExclude,
+} from '../../animation/timeNav';
 import { chordFor } from '../../app/keymap';
 import { activeFps, goToEnd, goToStart, togglePlayPause, toggleLoop } from '../../app/transport';
 import { getCameraState } from '../../viewport/cameraApi';
@@ -19,6 +24,7 @@ import { childrenOf } from '../../scene/tree';
 import { importAudioFile } from '../../io/importMedia';
 import type { AudioClip, AudioTrack, SceneObject } from '../../state/types';
 import { clampViewStart, computeZoomViewStart, formatTickLabel, tickStepMs } from './zoomMath';
+import { clampDeltaToStart, snapBodyDelta } from './dragSnap';
 import { WaveformCanvas } from './WaveformCanvas';
 import { buildObjectRows } from './lanePacking';
 import styles from './timeline.module.css';
@@ -53,6 +59,8 @@ function beginDrag(
 
 type PctFn = (t: number) => string;
 type TimeAtFn = (clientX: number, rect: DOMRect) => number;
+/** Snaps a time, optionally leaving out the item being dragged. */
+type SnapMsFn = (ms: number, exclude?: SnapExclude) => number;
 
 export function Timeline() {
   const scene = useActiveScene();
@@ -165,11 +173,23 @@ export function Timeline() {
   const timeAt: TimeAtFn = (clientX, rect) =>
     clamp(timelineViewStartMs + (clientX - rect.left) / timelinePxPerMs, 0, duration);
 
-  const snappedTimeAt: TimeAtFn = (clientX, rect) => {
-    const raw = timeAt(clientX, rect);
-    const thresholdMs = TIMELINE_SNAP_PX / timelinePxPerMs;
-    return applyTimelineSnap(raw, scene, timelineSnap, activeFps(), thresholdMs);
+  // Reads live store state rather than this render's closure: a drag installs
+  // one pointermove listener at pointerdown, so a render-time `scene` would stay
+  // frozen at the values the drag started from for the whole gesture.
+  const snapMs: SnapMsFn = (ms, exclude) => {
+    const px = useEditorStore.getState().timelinePxPerMs;
+    const live = getActiveScene(useDocumentStore.getState().project);
+    return applyTimelineSnap(
+      ms,
+      live,
+      timelineSnap,
+      activeFps(),
+      TIMELINE_SNAP_PX / px,
+      exclude,
+    );
   };
+  const snappedTimeAt = (clientX: number, rect: DOMRect, exclude?: SnapExclude) =>
+    snapMs(timeAt(clientX, rect), exclude);
 
   const scrubFrom = (clientX: number, rect: DOMRect) =>
     setPlayhead(snappedTimeAt(clientX, rect));
@@ -370,7 +390,9 @@ export function Timeline() {
                   e.stopPropagation();
                   setPlayhead(m.timeMs);
                   const rect = tracksRef.current!.getBoundingClientRect();
-                  beginDrag(rect, (x) => moveMarker(m.id, snappedTimeAt(x, rect)));
+                  beginDrag(rect, (x) =>
+                    moveMarker(m.id, snappedTimeAt(x, rect, { markerIds: [m.id] })),
+                  );
                 }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
@@ -389,7 +411,7 @@ export function Timeline() {
                   object={obj}
                   pct={pct}
                   timeAt={timeAt}
-                  snappedTimeAt={snappedTimeAt}
+                  snapMs={snapMs}
                   tracksRef={tracksRef}
                   selected={obj.id === selectedId}
                   hasChildren={childrenOf(scene.objects, obj.id).length > 0}
@@ -431,7 +453,7 @@ export function Timeline() {
                   clip={clip}
                   pct={pct}
                   timeAt={timeAt}
-                  snappedTimeAt={snappedTimeAt}
+                  snapMs={snapMs}
                   tracksRef={tracksRef}
                 />
               ))}
@@ -463,7 +485,7 @@ function ObjectClip({
   object,
   pct,
   timeAt,
-  snappedTimeAt,
+  snapMs,
   tracksRef,
   selected,
   hasChildren,
@@ -473,7 +495,7 @@ function ObjectClip({
   object: SceneObject;
   pct: PctFn;
   timeAt: TimeAtFn;
-  snappedTimeAt: TimeAtFn;
+  snapMs: SnapMsFn;
   tracksRef: React.RefObject<HTMLDivElement>;
   selected: boolean;
   hasChildren: boolean;
@@ -496,17 +518,27 @@ function ObjectClip({
     const startLife = { ...object.lifetime };
     const grabTime = timeAt(e.clientX, rect);
     const scale = e.shiftKey;
+    // The object being dragged must not be its own snap target.
+    const exclude: SnapExclude = { objectIds: [object.id] };
     const move = (clientX: number) => {
-      const t = snappedTimeAt(clientX, rect);
-      if (which === 'start') setObjectLifetime(object.id, { startMs: t, endMs: startLife.endMs });
-      else if (which === 'end') setObjectLifetime(object.id, { startMs: startLife.startMs, endMs: t });
-      else {
-        const delta = t - grabTime;
-        setObjectLifetime(object.id, {
-          startMs: startLife.startMs + delta,
-          endMs: startLife.endMs + delta,
-        });
+      if (which === 'start' || which === 'end') {
+        const t = snapMs(timeAt(clientX, rect), exclude);
+        if (which === 'start') setObjectLifetime(object.id, { startMs: t, endMs: startLife.endMs });
+        else setObjectLifetime(object.id, { startMs: startLife.startMs, endMs: t });
+        return;
       }
+      // Body: snap the clip's own edges, never the cursor — snapping the cursor
+      // and adding the grab offset back leaves the edges off-grid by however far
+      // into the clip the pointer went down.
+      const rawDelta = timeAt(clientX, rect) - grabTime;
+      const delta = clampDeltaToStart(
+        startLife.startMs,
+        snapBodyDelta(startLife.startMs, startLife.endMs, rawDelta, (ms) => snapMs(ms, exclude)),
+      );
+      setObjectLifetime(object.id, {
+        startMs: startLife.startMs + delta,
+        endMs: startLife.endMs + delta,
+      });
     };
     const m = (ev: PointerEvent) => move(ev.clientX);
     const up = () => {
@@ -572,7 +604,8 @@ function ObjectClip({
             // Track the live position so successive moves chain correctly.
             let cur = time;
             const m = (ev: PointerEvent) => {
-              const next = snappedTimeAt(ev.clientX, rect);
+              // Exclude the keyframe's own live time, or it snaps back to itself.
+              const next = snapMs(timeAt(ev.clientX, rect), { times: [cur] });
               moveKeyframesAtTime(object.id, cur, next);
               cur = next;
             };
@@ -598,19 +631,20 @@ function AudioClipBar({
   clip,
   pct,
   timeAt,
-  snappedTimeAt,
+  snapMs,
   tracksRef,
 }: {
   track: AudioTrack;
   clip: AudioClip;
   pct: PctFn;
   timeAt: TimeAtFn;
-  snappedTimeAt: TimeAtFn;
+  snapMs: SnapMsFn;
   tracksRef: React.RefObject<HTMLDivElement>;
 }) {
   const setAudioClipTime = useDocumentStore((s) => s.setAudioClipTime);
   const setAudioClipRange = useDocumentStore((s) => s.setAudioClipRange);
   const removeAudioClip = useDocumentStore((s) => s.removeAudioClip);
+  const moveAudioClipResolved = useDocumentStore((s) => s.moveAudioClipResolved);
   const timelinePxPerMs = useEditorStore((s) => s.timelinePxPerMs);
   const timelineRowScale = useEditorStore((s) => s.timelineRowScale);
 
@@ -623,11 +657,26 @@ function AudioClipBar({
     const rect = tracksRef.current!.getBoundingClientRect();
     const base = { ...clip };
     const grabTime = timeAt(e.clientX, rect);
+    // The clip being dragged must not be its own snap target.
+    const exclude: SnapExclude = { audioClipIds: [clip.id] };
+    // Remembered so pointerup can resolve overlaps at the final position.
+    let lastStartMs = base.startMs;
     const move = (clientX: number) => {
-      const t = snappedTimeAt(clientX, rect);
       if (which === 'body') {
-        setAudioClipTime(track.id, clip.id, base.startMs + (t - grabTime));
-      } else if (which === 'start') {
+        // Snap the clip's own edges, not the cursor (see dragSnap.ts).
+        const rawDelta = timeAt(clientX, rect) - grabTime;
+        const delta = clampDeltaToStart(
+          base.startMs,
+          snapBodyDelta(base.startMs, base.startMs + base.durationMs, rawDelta, (ms) =>
+            snapMs(ms, exclude),
+          ),
+        );
+        lastStartMs = base.startMs + delta;
+        setAudioClipTime(track.id, clip.id, lastStartMs);
+        return;
+      }
+      const t = snapMs(timeAt(clientX, rect), exclude);
+      if (which === 'start') {
         // Move the left edge, keeping the source content under it fixed.
         let ns = t;
         ns = Math.max(base.startMs - base.offsetMs, ns); // can't trim before source start
@@ -650,6 +699,12 @@ function AudioClipBar({
     const up = () => {
       window.removeEventListener('pointermove', m);
       window.removeEventListener('pointerup', up);
+      // Overwrite-resolve whatever the clip landed on — once, at the end of the
+      // gesture. Doing it per pointermove would repeatedly destroy the clip
+      // being swept across (and each pointermove is its own undo entry).
+      if (which === 'body' && lastStartMs !== base.startMs) {
+        moveAudioClipResolved(track.id, clip.id, lastStartMs);
+      }
     };
     window.addEventListener('pointermove', m);
     window.addEventListener('pointerup', up);

@@ -201,7 +201,12 @@ export interface AudioClip {
   loop: boolean;
 }
 
-/** A horizontal audio lane holding any number of non-overlapping-or-overlapping clips. */
+/**
+ * A horizontal audio lane. Clips are kept sorted by `startMs` and never
+ * overlap (butt-joined is fine) — the document store enforces this with
+ * overwrite semantics, since one voice per clip means overlaps would play the
+ * same source at two offsets at once.
+ */
 export interface AudioTrack {
   id: string;
   name: string;
