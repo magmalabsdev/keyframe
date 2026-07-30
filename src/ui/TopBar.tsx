@@ -92,10 +92,10 @@ export function TopBar() {
         <button onClick={() => openInput.current?.click()} title="Open a .kfp / .kfpx file">
           Open
         </button>
-        <button onClick={exportActiveScene} title="Export the current scene (.kfp)">
+        <button onClick={() => void exportActiveScene()} title="Export the current scene (.kfp)">
           Export .kfp
         </button>
-        <button onClick={exportProject} title="Export all scenes (.kfpx)">
+        <button onClick={() => void exportProject()} title="Export all scenes (.kfpx)">
           Export .kfpx
         </button>
         <input

@@ -1,0 +1,54 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.menu {
+  position: fixed;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  padding: 5px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.item:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+.item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.shortcut {
+  font: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.item:hover:not(:disabled) .shortcut {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

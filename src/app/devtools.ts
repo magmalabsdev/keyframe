@@ -1,11 +1,8 @@
 import { getActiveScene, useDocumentStore } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
-import {
-  addKeyframeAtPlayhead,
-  applyTransformEdit,
-} from '../animation/transformEdit';
+import { applyTransformEdit, keyframeSelection } from '../animation/transformEdit';
 import { restoreAutosave, saveNow } from '../io/persistence';
-import { getCameraState } from '../viewport/cameraApi';
+import { getCameraState, getControls } from '../viewport/cameraApi';
 import { getR3F } from '../render/renderApi';
 import { groupSelection, ungroupSelection } from '../scene/grouping';
 import { placeObjectFaceDown } from '../scene/placeOnFace';
@@ -25,10 +22,11 @@ export function installDevtools(): void {
     firstObjectId: () =>
       getActiveScene(useDocumentStore.getState().project).objects[0]?.id,
     applyTransformEdit,
-    addKeyframeAtPlayhead,
+    keyframeSelection,
     saveNow,
     restoreAutosave,
     getCameraState,
+    getControls,
     getR3F,
     groupSelection,
     ungroupSelection,

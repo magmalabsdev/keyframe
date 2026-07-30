@@ -54,5 +54,8 @@ export function createDefaultProject(): Project {
     scenes: [scene],
     activeSceneId: scene.id,
     assets: {},
+    media: {},
+    variables: [],
+    bindings: {},
   };
 }

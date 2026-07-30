@@ -7,6 +7,11 @@ import type { SceneObject } from '../state/types';
 /** In-app clipboard for scene objects (not the OS clipboard). */
 let clipboard: SceneObject[] = [];
 
+/** Whether there is anything to paste. */
+export function hasClipboard(): boolean {
+  return clipboard.length > 0;
+}
+
 /** Selected objects plus all descendants of any selected group. */
 function selectionWithDescendants(): SceneObject[] {
   const { selectedIds } = useEditorStore.getState();

@@ -1,14 +1,17 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type * as THREE from 'three';
-import type { GeometryData, Project, Scene } from '../state/types';
-import { buildGeometry } from './geometryCache';
+import type { GeometryData, MediaAsset, Project, Scene, Variable } from '../state/types';
+import { buildGeometry, getGeometryData, putGeometry, putGeometryData } from './geometryCache';
+import { getMediaBlob, putMedia } from './mediaCache';
+import { migrateProject } from '../state/migrate';
 
 /**
  * Self-contained keyframe document container (.kfp / .kfpx).
  *
  * Layout inside the zip:
- *   project.json       manifest: project metadata + scenes + asset metadata
+ *   project.json       manifest: project metadata + scenes + asset/media metadata
  *   geom/<id>.bin      per-asset binary geometry (Float32 pos, Float32 norm, Uint32 index)
+ *   media/<id>.<ext>   raw bytes of uploaded images/gifs/videos
  *
  * Geometry is stored as packed typed arrays rather than JSON so files stay
  * compact even for dense CAD meshes.
@@ -32,6 +35,22 @@ interface Manifest {
   scenes: Scene[];
   activeSceneId: string;
   assetMeta: Record<string, AssetMeta>;
+  mediaMeta: Record<string, MediaAsset>;
+  variables?: Variable[];
+  bindings?: Record<string, string>;
+}
+
+const MIME_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+};
+
+function extForMime(mimeType: string): string {
+  return MIME_EXT[mimeType] ?? mimeType.split('/')[1] ?? 'bin';
 }
 
 function geometryToBin(geometry: GeometryData): Uint8Array {
@@ -49,42 +68,55 @@ function binToGeometry(bytes: Uint8Array, meta: AssetMeta): GeometryData {
   // Copy into a fresh, aligned ArrayBuffer before creating typed-array views.
   const buf = bytes.slice().buffer;
   let offset = 0;
-  const positions = Array.from(new Float32Array(buf, offset, meta.posCount));
+  const positions = new Float32Array(buf, offset, meta.posCount);
   offset += meta.posCount * 4;
   const normals = meta.normCount
-    ? Array.from(new Float32Array(buf, offset, meta.normCount))
+    ? new Float32Array(buf, offset, meta.normCount)
     : undefined;
   offset += meta.normCount * 4;
   const index = meta.indexCount
-    ? Array.from(new Uint32Array(buf, offset, meta.indexCount))
+    ? new Uint32Array(buf, offset, meta.indexCount)
     : undefined;
   return { positions, normals, index };
 }
 
-/** Serialize selected scenes (and their assets) into a zip container. */
-export function serializeProject(project: Project, sceneIds: string[]): Uint8Array {
+/** Serialize selected scenes (and their assets/media) into a zip container. */
+export async function serializeProject(project: Project, sceneIds: string[]): Promise<Uint8Array> {
   const scenes = project.scenes.filter((s) => sceneIds.includes(s.id));
   const usedAssetIds = new Set<string>();
+  const usedMediaIds = new Set<string>();
   for (const scene of scenes) {
     for (const obj of scene.objects) {
       if (obj.assetId) usedAssetIds.add(obj.assetId);
+      if (obj.material.textureAssetId) usedMediaIds.add(obj.material.textureAssetId);
     }
+    if (scene.settings.backgroundMediaId) usedMediaIds.add(scene.settings.backgroundMediaId);
   }
 
   const files: Record<string, Uint8Array> = {};
   const assetMeta: Record<string, AssetMeta> = {};
   for (const id of usedAssetIds) {
     const asset = project.assets[id];
-    if (!asset) continue;
-    files[`geom/${id}.bin`] = geometryToBin(asset.geometry);
+    const data = getGeometryData(id);
+    if (!asset || !data) continue;
+    files[`geom/${id}.bin`] = geometryToBin(data);
     assetMeta[id] = {
       id,
       name: asset.name,
       format: asset.format,
-      posCount: asset.geometry.positions.length,
-      normCount: asset.geometry.normals?.length ?? 0,
-      indexCount: asset.geometry.index?.length ?? 0,
+      posCount: data.positions.length,
+      normCount: data.normals?.length ?? 0,
+      indexCount: data.index?.length ?? 0,
     };
+  }
+
+  const mediaMeta: Record<string, MediaAsset> = {};
+  for (const id of usedMediaIds) {
+    const media = project.media[id];
+    const blob = getMediaBlob(id);
+    if (!media || !blob) continue;
+    files[`media/${id}.${extForMime(media.mimeType)}`] = new Uint8Array(await blob.arrayBuffer());
+    mediaMeta[id] = media;
   }
 
   const manifest: Manifest = {
@@ -95,6 +127,9 @@ export function serializeProject(project: Project, sceneIds: string[]): Uint8Arr
     activeSceneId:
       scenes.find((s) => s.id === project.activeSceneId)?.id ?? scenes[0]?.id,
     assetMeta,
+    mediaMeta,
+    variables: project.variables ?? [],
+    bindings: project.bindings ?? {},
   };
   files['project.json'] = strToU8(JSON.stringify(manifest));
 
@@ -118,22 +153,36 @@ export function parseProjectContainer(bytes: Uint8Array): ParsedContainer {
   for (const meta of Object.values(manifest.assetMeta)) {
     const bin = files[`geom/${meta.id}.bin`];
     if (!bin) continue;
-    const geometry = binToGeometry(bin, meta);
+    const data = binToGeometry(bin, meta);
+    // Asset metadata only in the project; geometry lives in the caches.
     assets[meta.id] = {
       id: meta.id,
       name: meta.name,
       format: meta.format as Project['assets'][string]['format'],
-      geometry,
     };
-    geometries.set(meta.id, buildGeometry(geometry));
+    putGeometryData(meta.id, data);
+    const geometry = buildGeometry(data);
+    putGeometry(meta.id, geometry);
+    geometries.set(meta.id, geometry);
   }
 
-  const project: Project = {
+  const media: Project['media'] = {};
+  for (const meta of Object.values(manifest.mediaMeta ?? {})) {
+    const bytes = files[`media/${meta.id}.${extForMime(meta.mimeType)}`];
+    if (!bytes) continue;
+    putMedia(meta.id, new Blob([bytes], { type: meta.mimeType }));
+    media[meta.id] = meta;
+  }
+
+  const project: Project = migrateProject({
     version: manifest.version,
     name: manifest.name,
     scenes: manifest.scenes,
     activeSceneId: manifest.activeSceneId,
     assets,
-  };
+    media,
+    variables: manifest.variables ?? [],
+    bindings: manifest.bindings ?? {},
+  });
   return { project, geometries };
 }

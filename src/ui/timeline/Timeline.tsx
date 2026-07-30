@@ -39,8 +39,8 @@ export function Timeline() {
   const selectedIds = useEditorStore((s) => s.selectedIds);
 
   const upsertCameraKeyframe = useDocumentStore((s) => s.upsertCameraKeyframe);
-  const setKeyframeTime = useDocumentStore((s) => s.setKeyframeTime);
-  const removeKeyframe = useDocumentStore((s) => s.removeKeyframe);
+  const moveKeyframesAtTime = useDocumentStore((s) => s.moveKeyframesAtTime);
+  const deleteKeyframesAtTime = useDocumentStore((s) => s.deleteKeyframesAtTime);
   const setObjectLifetime = useDocumentStore((s) => s.setObjectLifetime);
   const remapKeyframeTimes = useDocumentStore((s) => s.remapKeyframeTimes);
 
@@ -130,12 +130,16 @@ export function Timeline() {
                 duration={duration}
                 pct={pct}
                 onJump={(t) => setPlayhead(t)}
-                onMoveKeyframe={(kfId, clientX) => {
+                onMoveKeyframe={(fromMs, clientX) => {
                   const rect = tracksRef.current!.getBoundingClientRect();
-                  setKeyframeTime(selectedObject.id, kfId, timeAt(clientX, rect));
+                  return moveKeyframesAtTime(
+                    selectedObject.id,
+                    fromMs,
+                    timeAt(clientX, rect),
+                  );
                 }}
-                onDeleteKeyframe={(kfId) =>
-                  removeKeyframe(selectedObject.id, kfId)
+                onDeleteKeyframe={(timeMs) =>
+                  deleteKeyframesAtTime(selectedObject.id, timeMs)
                 }
                 onLifetime={(life) => setObjectLifetime(selectedObject.id, life)}
                 onResizeEnd={(oldLife, scale) => {
@@ -212,8 +216,8 @@ function ObjectLane({
   duration: number;
   pct: (t: number) => string;
   onJump: (t: number) => void;
-  onMoveKeyframe: (kfId: string, clientX: number) => void;
-  onDeleteKeyframe: (kfId: string) => void;
+  onMoveKeyframe: (fromTimeMs: number, clientX: number) => void;
+  onDeleteKeyframe: (timeMs: number) => void;
   onLifetime: (life: { startMs: number; endMs: number }) => void;
   onResizeEnd: (
     oldLife: { startMs: number; endMs: number },
@@ -271,36 +275,45 @@ function ObjectLane({
         />
       </div>
 
-      {object.keyframes.map((k) => (
+      {keyframeTimes(object).map((time) => (
         <button
-          key={k.id}
+          key={time}
           className={styles.kf}
-          style={{ left: pct(k.timeMs) }}
-          title={`Keyframe @ ${(k.timeMs / 1000).toFixed(2)}s — click to jump, double-click to delete`}
+          style={{ left: pct(time) }}
+          title={`Keyframe @ ${(time / 1000).toFixed(2)}s — click to jump, double-click to delete`}
           onPointerDown={(e) => {
             e.stopPropagation();
             const rect = tracksRef.current!.getBoundingClientRect();
-            onJump(k.timeMs);
-            let moved = false;
+            onJump(time);
+            // Track the live position so successive moves chain correctly.
+            let cur = time;
             const m = (ev: PointerEvent) => {
-              moved = true;
-              onMoveKeyframe(k.id, ev.clientX);
+              const next = timeAt(ev.clientX, rect);
+              onMoveKeyframe(cur, ev.clientX);
+              cur = next;
             };
             const up = () => {
               window.removeEventListener('pointermove', m);
               window.removeEventListener('pointerup', up);
-              void moved;
-              void rect;
             };
             window.addEventListener('pointermove', m);
             window.addEventListener('pointerup', up);
           }}
           onDoubleClick={(e) => {
             e.stopPropagation();
-            onDeleteKeyframe(k.id);
+            onDeleteKeyframe(time);
           }}
         />
       ))}
     </>
   );
+}
+
+/** Sorted, de-duplicated times that have at least one keyframe across channels. */
+function keyframeTimes(object: import('../../state/types').SceneObject): number[] {
+  const set = new Set<number>();
+  for (const track of Object.values(object.tracks)) {
+    if (track) for (const k of track) set.add(k.timeMs);
+  }
+  return [...set].sort((a, b) => a - b);
 }

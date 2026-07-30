@@ -3,6 +3,14 @@ import { create } from 'zustand';
 export type Tool = 'select' | 'move' | 'scale' | 'rotate' | 'place';
 export type SaveStatus = 'idle' | 'saving' | 'saved';
 
+/** A background operation (import, texture load, etc.) shown in the top-center HUD. */
+export interface BackgroundTask {
+  id: string;
+  label: string;
+  /** 0..1, or null while indeterminate. */
+  progress: number | null;
+}
+
 /**
  * Transient editor state (selection, active tool, playhead). This is deliberately
  * separate from the document store so it is never serialized and never part of
@@ -24,6 +32,10 @@ export interface EditorState {
   snapEnabled: boolean;
   /** Object whose center of rotation is being edited (shows a pivot handle). */
   corEditId: string | null;
+  /** Background operations (import, texture load, etc.) shown in the top-center HUD. */
+  backgroundTasks: BackgroundTask[];
+  /** STEP tessellation quality 0 (coarse/fast) .. 1 (fine/slow). Persisted. */
+  importQuality: number;
 
   setSelection: (ids: string[]) => void;
   toggleSelection: (id: string, additive: boolean) => void;
@@ -37,6 +49,16 @@ export interface EditorState {
   setRenderPreview: (on: boolean) => void;
   setSnapEnabled: (on: boolean) => void;
   setCorEditId: (id: string | null) => void;
+  startBackgroundTask: (id: string, label: string) => void;
+  setBackgroundTaskProgress: (id: string, progress: number | null) => void;
+  endBackgroundTask: (id: string) => void;
+  setImportQuality: (q: number) => void;
+}
+
+const IMPORT_QUALITY_KEY = 'keyframe:importQuality';
+function loadImportQuality(): number {
+  const v = Number(localStorage.getItem(IMPORT_QUALITY_KEY));
+  return Number.isFinite(v) && v > 0 ? Math.min(1, v) : 0.5;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
@@ -50,6 +72,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   renderPreview: false,
   snapEnabled: true,
   corEditId: null,
+  backgroundTasks: [],
+  importQuality: loadImportQuality(),
 
   setSelection: (ids) => set({ selectedIds: ids }),
   toggleSelection: (id, additive) =>
@@ -71,4 +95,28 @@ export const useEditorStore = create<EditorState>((set) => ({
   setExportProgress: (exportProgress) => set({ exportProgress }),
   setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
   setCorEditId: (corEditId) => set({ corEditId }),
+  startBackgroundTask: (id, label) =>
+    set((s) => ({
+      backgroundTasks: [
+        ...s.backgroundTasks.filter((t) => t.id !== id),
+        { id, label, progress: null },
+      ],
+    })),
+  setBackgroundTaskProgress: (id, progress) =>
+    set((s) => ({
+      backgroundTasks: s.backgroundTasks.map((t) =>
+        t.id === id ? { ...t, progress } : t,
+      ),
+    })),
+  endBackgroundTask: (id) =>
+    set((s) => ({ backgroundTasks: s.backgroundTasks.filter((t) => t.id !== id) })),
+  setImportQuality: (q) => {
+    const v = Math.max(0, Math.min(1, q));
+    try {
+      localStorage.setItem(IMPORT_QUALITY_KEY, String(v));
+    } catch {
+      /* ignore */
+    }
+    set({ importQuality: v });
+  },
 }));

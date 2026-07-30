@@ -65,6 +65,7 @@
 }
 
 .numField {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -73,6 +74,96 @@
   border-radius: var(--radius-sm);
   padding: 2px 4px;
   min-width: 0;
+}
+/* A field driven by a variable expression. */
+.boundField {
+  border-color: var(--accent);
+}
+.boundField input {
+  color: var(--accent);
+  font-style: italic;
+}
+
+/* A field that has a keyframe exactly at the current playhead. */
+.kfActiveField {
+  border-color: var(--warning);
+  box-shadow: inset 0 0 0 1px var(--warning);
+}
+
+/* Per-value keyframe diamond toggle. */
+.kfDiamond {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.kfDiamond:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
+/* Has a keyframe at the playhead. */
+.kfDiamondOn {
+  color: var(--warning);
+}
+/* Channel is animated but no keyframe sits exactly at the playhead. */
+.kfDiamondTrack {
+  color: var(--text-dim);
+}
+
+.colorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Variable-name autocomplete dropdown. */
+.acMenu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: -1px;
+  right: -1px;
+  z-index: 20;
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.acItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  font: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.acItem:hover,
+.acItemActive {
+  background: var(--accent);
+  color: #fff;
+}
+.acValue {
+  color: var(--text-faint);
+}
+.acItemActive .acValue {
+  color: rgba(255, 255, 255, 0.8);
 }
 .numField:focus-within {
   border-color: var(--accent);
@@ -199,6 +290,92 @@
   cursor: pointer;
 }
 
+.hsvRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr) 1.4fr;
+  gap: 5px;
+}
+.hsvField {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 4px;
+  min-width: 0;
+}
+.hsvField span {
+  font: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.hsvField input {
+  border: none;
+  background: transparent;
+  padding: 2px;
+  width: 100%;
+  min-width: 0;
+  font: var(--mono);
+  font-size: 11px;
+}
+.hsvField input:focus {
+  outline: none;
+}
+.hsvField:focus-within {
+  border-color: var(--accent);
+}
+/* Hide number spinners for a cleaner look. */
+.hsvField input[type='number']::-webkit-outer-spin-button,
+.hsvField input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.hsvField input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.texturePreview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.texturePreview img {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.texturePreview button {
+  flex: 1;
+}
+.mediaPreview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.mediaPreview .mediaLabel {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mediaPreview img {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
 .empty {
   padding: 4px 12px 16px;
 }
@@ -245,6 +422,26 @@
   margin-top: 2px;
 }
 
+.varList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.varRow {
+  display: grid;
+  grid-template-columns: 1fr 84px auto;
+  align-items: center;
+  gap: 6px;
+}
+.varName {
+  font: var(--mono);
+  font-size: 12px;
+  padding: 3px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 .kfList {
   display: flex;
   flex-direction: column;
@@ -255,6 +452,30 @@
   grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 6px;
+}
+.kfMain {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+.kfChips {
+  display: flex;
+  gap: 3px;
+}
+.kfChip {
+  font: var(--mono);
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--panel-3);
+  color: var(--text-faint);
+}
+.kfChipOn {
+  background: var(--accent);
+  color: #fff;
 }
 .kfTime {
   text-align: left;

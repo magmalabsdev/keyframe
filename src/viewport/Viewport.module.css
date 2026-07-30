@@ -37,6 +37,53 @@
   border-radius: 999px;
 }
 
+.taskHud {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  color: #fff;
+  font: var(--mono);
+  font-size: 12px;
+  background: rgba(20, 22, 28, 0.85);
+  border: 1px solid var(--border);
+  padding: 6px 14px;
+  border-radius: 999px;
+  z-index: 9;
+}
+.taskBarTrack {
+  width: 100px;
+  height: 6px;
+  background: var(--panel-3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.taskBarFill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.1s linear;
+}
+.taskPct {
+  color: var(--text-dim);
+}
+.taskSpinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: task-spin 0.7s linear infinite;
+}
+@keyframes task-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .dropOverlay {
   position: absolute;
   inset: 0;

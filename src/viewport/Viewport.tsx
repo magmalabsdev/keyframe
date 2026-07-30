@@ -1,14 +1,20 @@
-import { useState } from 'react';
-import { Canvas } from '@react-three/fiber';
-import { useActiveScene } from '../state/documentStore';
+import { useEffect, useState } from 'react';
+import * as THREE from 'three';
+import { Canvas, useThree } from '@react-three/fiber';
 import { useEditorStore } from '../state/editorStore';
+import { useDocumentStore } from '../state/documentStore';
 import { importModelFiles } from '../io/importModel';
+import { getR3F } from '../render/renderApi';
+import { selectInScene } from '../scene/grouping';
+import { openSelectionMenu } from '../ui/ContextMenu';
 import { BuildPlate } from './BuildPlate';
 import { CameraRig } from './CameraRig';
 import { SceneObjects } from './SceneObjects';
 import { Gizmo } from './Gizmo';
 import { AnimationSystem } from './AnimationSystem';
 import { PivotHandle } from './PivotHandle';
+import { FaceHighlight } from './FaceHighlight';
+import { SceneBackground } from './SceneBackground';
 import { ViewCube } from './ViewCube';
 import { registerCamera } from './cameraApi';
 import { useMarquee } from './useMarquee';
@@ -16,10 +22,55 @@ import { RenderRegistrar } from '../render/RenderRegistrar';
 import { ViewportToolbar } from '../ui/ViewportToolbar';
 import styles from './Viewport.module.css';
 
+/**
+ * With `frameloop="demand"` the scene only redraws when invalidated. Request a
+ * frame on any document/editor change and on canvas pointer/wheel input so
+ * edits, selection, scrubbing, hover highlights, gizmo drags and orbit all
+ * render — while a truly idle viewport costs nothing.
+ */
+function FrameInvalidation() {
+  const invalidate = useThree((s) => s.invalidate);
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    const inv = () => invalidate();
+    const unsubDoc = useDocumentStore.subscribe(inv);
+    const unsubEditor = useEditorStore.subscribe(inv);
+    const el = gl.domElement;
+    el.addEventListener('pointermove', inv);
+    el.addEventListener('pointerdown', inv);
+    el.addEventListener('wheel', inv, { passive: true });
+    return () => {
+      unsubDoc();
+      unsubEditor();
+      el.removeEventListener('pointermove', inv);
+      el.removeEventListener('pointerdown', inv);
+      el.removeEventListener('wheel', inv);
+    };
+  }, [invalidate, gl]);
+  return null;
+}
+
+/** Picks the scene-object id of the mesh under a screen point, if any. */
+function pickObjectId(clientX: number, clientY: number): string | null {
+  const root = getR3F();
+  if (!root) return null;
+  const r = root.gl.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((clientX - r.left) / r.width) * 2 - 1,
+    -((clientY - r.top) / r.height) * 2 + 1,
+  );
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(ndc, root.camera);
+  const hit = ray
+    .intersectObjects(root.scene.children, true)
+    .find((h) => h.object.visible && h.object.name?.endsWith('__mesh'));
+  return hit ? hit.object.name.replace(/__mesh$/, '') : null;
+}
+
 export function Viewport() {
-  const scene = useActiveScene();
   const exportProgress = useEditorStore((s) => s.exportProgress);
   const renderPreview = useEditorStore((s) => s.renderPreview);
+  const backgroundTasks = useEditorStore((s) => s.backgroundTasks);
   const [dragOver, setDragOver] = useState(false);
   const marquee = useMarquee();
 
@@ -36,8 +87,35 @@ export function Viewport() {
         setDragOver(false);
         if (e.dataTransfer.files.length) void importModelFiles(e.dataTransfer.files);
       }}
+      onPointerDown={(e) => {
+        if (e.button !== 2 || renderPreview) return;
+        // Decide the menu on pointer-UP based on whether an orbit drag happened.
+        // contextmenu fires on mouse-DOWN (mac/Linux) before any movement, so it
+        // can't tell click from drag; window capture listeners see moves even
+        // while camera-controls holds pointer capture during an orbit.
+        const sx = e.clientX;
+        const sy = e.clientY;
+        let moved = false;
+        const onMove = (ev: PointerEvent) => {
+          if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 5) moved = true;
+        };
+        const onUp = (ev: PointerEvent) => {
+          window.removeEventListener('pointermove', onMove, true);
+          window.removeEventListener('pointerup', onUp, true);
+          if (ev.button !== 2 || moved) return; // an orbit drag, not a click
+          const id = pickObjectId(ev.clientX, ev.clientY);
+          if (id && !useEditorStore.getState().selectedIds.includes(id)) {
+            selectInScene(id, false);
+          }
+          openSelectionMenu(ev.clientX, ev.clientY);
+        };
+        window.addEventListener('pointermove', onMove, true);
+        window.addEventListener('pointerup', onUp, true);
+      }}
+      onContextMenu={(e) => e.preventDefault()}
     >
       <Canvas
+        frameloop="demand"
         dpr={[1, 2]}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
         camera={{ fov: 45, near: 1, far: 500000, position: [0, 0, 1200] }}
@@ -50,7 +128,8 @@ export function Viewport() {
           registerCamera(camera);
         }}
       >
-        <color attach="background" args={[scene.settings.backgroundColor]} />
+        <FrameInvalidation />
+        <SceneBackground />
 
         <hemisphereLight args={['#ffffff', '#3a3f4a', 0.6]} />
         <ambientLight intensity={0.35} />
@@ -62,6 +141,7 @@ export function Viewport() {
         <Gizmo />
         <PivotHandle />
         <AnimationSystem />
+        <FaceHighlight />
         <RenderRegistrar />
         <CameraRig />
       </Canvas>
@@ -103,6 +183,27 @@ export function Viewport() {
               {Math.round(exportProgress * 100)}%
             </div>
           </div>
+        </div>
+      )}
+
+      {backgroundTasks.length > 0 && (
+        <div className={styles.taskHud}>
+          <span>{backgroundTasks[0].label}</span>
+          {backgroundTasks[0].progress != null ? (
+            <>
+              <div className={styles.taskBarTrack}>
+                <div
+                  className={styles.taskBarFill}
+                  style={{ width: `${Math.round(backgroundTasks[0].progress * 100)}%` }}
+                />
+              </div>
+              <span className={styles.taskPct}>
+                {Math.round(backgroundTasks[0].progress * 100)}%
+              </span>
+            </>
+          ) : (
+            <span className={styles.taskSpinner} />
+          )}
         </div>
       )}
 

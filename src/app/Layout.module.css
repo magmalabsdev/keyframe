@@ -1,4 +1,5 @@
 .layout {
+  position: relative;
   display: grid;
   grid-template-columns: var(--left-w) 1fr var(--right-w);
   grid-template-rows: var(--top-h) 1fr var(--bottom-h);
@@ -11,6 +12,39 @@
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
+}
+
+/* Drag handles sitting on the panel borders. */
+.resizer {
+  position: absolute;
+  z-index: 50;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.resizer:hover,
+.resizer:active {
+  background: var(--accent);
+}
+
+.resizerLeft,
+.resizerRight {
+  top: var(--top-h);
+  bottom: var(--bottom-h);
+  width: 6px;
+  cursor: col-resize;
+}
+.resizerLeft {
+  left: calc(var(--left-w) - 3px);
+}
+.resizerRight {
+  right: calc(var(--right-w) - 3px);
+}
+.resizerBottom {
+  left: 0;
+  right: 0;
+  bottom: calc(var(--bottom-h) - 3px);
+  height: 6px;
+  cursor: row-resize;
 }
 
 .top {

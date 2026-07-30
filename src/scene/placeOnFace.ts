@@ -8,7 +8,7 @@ const DOWN = new THREE.Vector3(0, 0, -1);
 
 /**
  * Bambu-style "place on face": rotate the object so the clicked face points down
- * (−Z), then rest it on the build plate (world bbox minZ → 0). Keeps X/Y origin.
+ * (−Z). Position is left unchanged — only orientation changes.
  */
 export function placeObjectFaceDown(
   objectId: string,
@@ -39,21 +39,11 @@ export function placeObjectFaceDown(
     localQuat = parentWorld.invert().multiply(newWorld);
   }
   const euler = new THREE.Euler().setFromQuaternion(localQuat, 'XYZ');
-
-  // Apply the rotation on the live mesh to measure the resulting world minZ.
-  const savedQuat = mesh.quaternion.clone();
-  mesh.quaternion.copy(localQuat);
-  mesh.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(mesh);
-  const minZ = box.min.z;
-  mesh.quaternion.copy(savedQuat);
-
-  const position: Vec3 = [
-    obj.transform.position[0],
-    obj.transform.position[1],
-    obj.transform.position[2] - minZ,
-  ];
   const rotation: Vec3 = [r2d(euler.x), r2d(euler.y), r2d(euler.z)];
 
-  applyTransformEdit(objectId, { position, rotation, scale: obj.transform.scale });
+  applyTransformEdit(objectId, {
+    position: obj.transform.position,
+    rotation,
+    scale: obj.transform.scale,
+  });
 }

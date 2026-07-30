@@ -18,6 +18,19 @@ export function topLevelAncestor(objects: SceneObject[], id: string): string {
   return current ? current.id : id;
 }
 
+/** Depth-first visual order: roots in array order, each followed by its children recursively. */
+export function flattenTree(objects: SceneObject[]): SceneObject[] {
+  const result: SceneObject[] = [];
+  const visit = (parentId: string | null) => {
+    for (const o of childrenOf(objects, parentId)) {
+      result.push(o);
+      if (o.type === 'group') visit(o.id);
+    }
+  };
+  visit(null);
+  return result;
+}
+
 /** All descendant ids of an object (excluding itself). */
 export function descendantIds(objects: SceneObject[], id: string): string[] {
   const result: string[] = [];

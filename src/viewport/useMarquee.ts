@@ -16,6 +16,14 @@ const _ray = new THREE.Raycaster();
 const _box = new THREE.Box3();
 const _center = new THREE.Vector3();
 
+/** True if `object` or any ancestor is part of a three-stdlib TransformControls gizmo. */
+function isOnTransformControls(object: THREE.Object3D | null): boolean {
+  for (let o: THREE.Object3D | null = object; o; o = o.parent) {
+    if ((o as any).isTransformControlsGizmo || (o as any).isTransformControlsPlane) return true;
+  }
+  return false;
+}
+
 function selectInRect(
   sx: number,
   sy: number,
@@ -75,8 +83,8 @@ export function useMarquee() {
       _ray.setFromCamera(_ndc, root.camera);
       const onObject = _ray
         .intersectObjects(root.scene.children, true)
-        .some((h) => h.object.name?.endsWith('__mesh'));
-      if (onObject) return; // object/freedrag handles it
+        .some((h) => h.object.name?.endsWith('__mesh') || isOnTransformControls(h.object));
+      if (onObject) return; // object/freedrag/gizmo handles it
 
       const startX = e.clientX;
       const startY = e.clientY;

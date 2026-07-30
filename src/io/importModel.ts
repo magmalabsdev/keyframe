@@ -4,7 +4,9 @@ import { useEditorStore } from '../state/editorStore';
 import { defaultMaterial, identityTransform } from '../state/defaults';
 import type { Asset, SceneObject } from '../state/types';
 import { loadModelFile } from './loaders';
-import { geometryToData, putGeometry } from './geometryCache';
+import { buildGeometry, putGeometry, putGeometryData } from './geometryCache';
+import { persistGeometriesDeferred } from './persistence';
+import type { GeometryData } from '../state/types';
 import { frameObjects } from '../viewport/cameraApi';
 
 /**
@@ -14,7 +16,14 @@ import { frameObjects } from '../viewport/cameraApi';
  * assembly keeps its relative arrangement.
  */
 export async function importModelFile(file: File): Promise<string[]> {
-  const loaded = await loadModelFile(file);
+  const taskId = 'model-import';
+  useEditorStore.getState().startBackgroundTask(taskId, `Importing ${file.name}`);
+  let loaded: Awaited<ReturnType<typeof loadModelFile>>;
+  try {
+    loaded = await loadModelFile(file, useEditorStore.getState().importQuality);
+  } finally {
+    useEditorStore.getState().endBackgroundTask(taskId);
+  }
 
   const scene = getActiveScene(useDocumentStore.getState().project);
   const n = scene.objects.length;
@@ -26,16 +35,15 @@ export async function importModelFile(file: File): Promise<string[]> {
 
   const assets: Asset[] = [];
   const objects: SceneObject[] = [];
+  const toPersist: Array<[string, GeometryData]> = [];
 
   for (const part of loaded.parts) {
     const assetId = nanoid();
-    putGeometry(assetId, part.geometry);
-    assets.push({
-      id: assetId,
-      name: part.name,
-      format: loaded.format,
-      geometry: geometryToData(part.geometry),
-    });
+    // Geometry lives only in the caches (+ IDB) — never in the document store.
+    putGeometry(assetId, buildGeometry(part.data));
+    putGeometryData(assetId, part.data);
+    toPersist.push([assetId, part.data]);
+    assets.push({ id: assetId, name: part.name, format: loaded.format });
 
     const transform = identityTransform();
     transform.position = [...offset];
@@ -51,13 +59,25 @@ export async function importModelFile(file: File): Promise<string[]> {
       visible: true,
       lifetime: { startMs: 0, endMs: scene.durationMs },
       transform,
-      keyframes: [],
+      tracks: {},
       centerOfRotation: [0, 0, 0],
       material,
     });
   }
 
-  useDocumentStore.getState().addImportedModels(assets, objects);
+  const doc = useDocumentStore.getState();
+  // Register all asset metadata first (cheap), then mount objects in batches
+  // across frames so a huge assembly never blocks the main thread in one commit.
+  doc.addImportedModels(assets, []);
+  const BATCH = 300;
+  for (let i = 0; i < objects.length; i += BATCH) {
+    doc.addObjects(objects.slice(i, i + BATCH));
+    if (i + BATCH < objects.length) {
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+  }
+  // Persist geometry to IndexedDB off the critical path (batched, during idle).
+  persistGeometriesDeferred(toPersist);
   const ids = objects.map((o) => o.id);
   useEditorStore.getState().setSelection(ids);
   // Frame the new objects once React has mounted their meshes.

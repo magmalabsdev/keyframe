@@ -140,3 +140,21 @@
   color: var(--danger);
   background: none;
 }
+
+.qualityRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.qualityRow input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+.qualityValue {
+  font: var(--mono);
+  width: 30px;
+  text-align: right;
+}

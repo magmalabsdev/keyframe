@@ -7,12 +7,37 @@ import { applyTransformEdit } from '../animation/transformEdit';
 
 const r2d = THREE.MathUtils.radToDeg;
 const ROTATION_SNAP_DEG = 15;
+const _white = new THREE.Color(1, 1, 1);
+
+/**
+ * Tints the translate gizmo's axis handles toward pastel (lerp to white) when
+ * `pastel` is true, or restores their original colors when false. Both `color`
+ * and `tempColor` are written because three-stdlib restores each handle's color
+ * from `tempColor` every frame in updateMatrixWorld.
+ */
+function setTranslateGizmoPastel(controls: any, pastel: boolean) {
+  const translate = controls?.gizmo?.gizmo?.translate as THREE.Object3D | undefined;
+  if (!translate) return;
+  translate.traverse((handle: any) => {
+    const mat = handle.material as (THREE.Material & { color?: THREE.Color; tempColor?: THREE.Color }) | undefined;
+    if (!mat || !mat.color) return;
+    if (!mat.userData.baseColor) {
+      mat.userData.baseColor = (mat.tempColor ?? mat.color).clone();
+    }
+    const base = mat.userData.baseColor as THREE.Color;
+    const next = pastel ? base.clone().lerp(_white, 0.5) : base.clone();
+    mat.color.copy(next);
+    mat.tempColor = next.clone();
+  });
+}
 
 /**
  * Transform gizmo for the single selected object. Move = translate, Scale and
  * Rotate map to the matching modes. Holding Shift snaps rotation to 15° and makes
- * scaling uniform. The gizmo mutates the target mesh live; the new transform is
- * committed to the document store (one undo entry) when the drag ends.
+ * scaling uniform; in Move mode, Shift translates along the object's local axes
+ * (with pastel-tinted handles) instead of world axes. The gizmo mutates the
+ * target mesh live; the new transform is committed to the document store (one
+ * undo entry) when the drag ends.
  */
 export function Gizmo() {
   const selectedIds = useEditorStore((s) => s.selectedIds);
@@ -20,6 +45,7 @@ export function Gizmo() {
   const hidden = useEditorStore((s) => s.exportProgress != null || s.renderPreview);
   const setDraggingId = useEditorStore((s) => s.setDraggingId);
   const scene = useThree((s) => s.scene);
+  const invalidate = useThree((s) => s.invalidate);
   const controlsRef = useRef<any>(null);
   const startScale = useRef(new THREE.Vector3(1, 1, 1));
   const [shift, setShift] = useState(false);
@@ -38,6 +64,14 @@ export function Gizmo() {
       window.removeEventListener('keyup', up);
     };
   }, []);
+
+  // Pastel-tint the move handles while Shift is held in Move mode (local axes).
+  const localMove = tool === 'move' && shift;
+  useEffect(() => {
+    if (!controlsRef.current) return;
+    setTranslateGizmoPastel(controlsRef.current, localMove);
+    invalidate();
+  }, [localMove, selectedIds, invalidate]);
 
   // Hide the gizmo during a clean render preview / video export, and for the
   // select / place tools (place uses raw face clicks).
@@ -81,6 +115,7 @@ export function Gizmo() {
       ref={controlsRef}
       object={target as THREE.Object3D}
       mode={mode}
+      space={localMove ? 'local' : 'world'}
       size={0.85}
       rotationSnap={shift ? THREE.MathUtils.degToRad(ROTATION_SNAP_DEG) : null}
       onMouseDown={() => {

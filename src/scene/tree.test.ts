@@ -12,7 +12,7 @@ function obj(id: string, parentId: string | null): SceneObject {
     visible: true,
     lifetime: { startMs: 0, endMs: 1000 },
     transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    keyframes: [],
+    tracks: {},
     centerOfRotation: [0, 0, 0],
     material: { color: '#fff', opacity: 1, metalness: 0, roughness: 1 },
   };

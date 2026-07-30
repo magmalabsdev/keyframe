@@ -1,6 +1,6 @@
 import { getActiveScene, useDocumentStore } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
-import type { Transform } from '../state/types';
+import type { ChannelKey, Transform, ValueKeyframe } from '../state/types';
 import { evaluateObject } from './evaluate';
 
 function findObject(objectId: string) {
@@ -8,33 +8,76 @@ function findObject(objectId: string) {
   return getActiveScene(project).objects.find((o) => o.id === objectId);
 }
 
+/** Channels that currently have at least one keyframe. */
+function animatedChannels(tracks: Record<string, ValueKeyframe[] | undefined>): ChannelKey[] {
+  return (Object.keys(tracks) as ChannelKey[]).filter((c) => (tracks[c]?.length ?? 0) > 0);
+}
+
 /**
- * Apply a transform edit from a gizmo or inspector. If the object is animated
- * (has keyframes) the edit upserts a keyframe at the playhead (auto-key);
- * otherwise it updates the object's static base transform.
+ * Apply a transform edit from a gizmo or inspector. For each axis: if that
+ * channel is keyframed, auto-key the new value at the playhead; otherwise
+ * update the object's static base transform. Independent per-channel.
  */
 export function applyTransformEdit(objectId: string, transform: Transform): void {
   const obj = findObject(objectId);
   if (!obj) return;
   const doc = useDocumentStore.getState();
-  if (obj.keyframes.length > 0) {
-    doc.upsertKeyframe(objectId, useEditorStore.getState().playheadMs, transform);
+  const timeMs = useEditorStore.getState().playheadMs;
+  const animated = new Set(animatedChannels(obj.tracks));
+
+  let staticPatch: Partial<Transform> | null = null;
+  const fields: ['position' | 'rotation' | 'scale', readonly ChannelKey[]][] = [
+    ['position', ['position.0', 'position.1', 'position.2']],
+    ['rotation', ['rotation.0', 'rotation.1', 'rotation.2']],
+    ['scale', ['scale.0', 'scale.1', 'scale.2']],
+  ];
+  for (const [field, channels] of fields) {
+    for (let axis = 0; axis < 3; axis++) {
+      const channel = channels[axis];
+      if (animated.has(channel)) {
+        doc.setChannelKeyframeValue(`object:${objectId}:${field}:${axis}`, timeMs, transform[field][axis]);
+      } else {
+        (staticPatch ??= {})[field] = transform[field];
+      }
+    }
+  }
+  if (staticPatch) doc.patchObjectTransform(objectId, staticPatch);
+}
+
+/**
+ * Apply a color edit from the inspector. If the color channel is keyframed,
+ * auto-key it at the playhead; otherwise update the static material color.
+ */
+export function applyColorEdit(objectId: string, color: string): void {
+  const obj = findObject(objectId);
+  if (!obj) return;
+  const doc = useDocumentStore.getState();
+  if ((obj.tracks.color?.length ?? 0) > 0) {
+    const timeMs = useEditorStore.getState().playheadMs;
+    doc.setChannelKeyframeValue(`object:${objectId}:color`, timeMs, color);
   } else {
-    doc.setObjectTransform(objectId, transform);
+    doc.setObjectMaterial(objectId, { color });
   }
 }
 
-/** Capture an object's current pose into a keyframe at the playhead. */
-export function addKeyframeAtPlayhead(objectId: string): void {
-  const obj = findObject(objectId);
-  if (!obj) return;
-  const timeMs = useEditorStore.getState().playheadMs;
-  const transform = evaluateObject(obj, timeMs);
-  useDocumentStore.getState().upsertKeyframe(objectId, timeMs, transform);
-}
-
-/** Add a keyframe at the playhead for every selected object. */
+/** Capture the current value of every animated channel as a keyframe at the playhead. */
 export function keyframeSelection(): void {
-  const { selectedIds } = useEditorStore.getState();
-  selectedIds.forEach(addKeyframeAtPlayhead);
+  const { selectedIds, playheadMs } = useEditorStore.getState();
+  const doc = useDocumentStore.getState();
+  for (const id of selectedIds) {
+    const obj = findObject(id);
+    if (!obj) continue;
+    const pose = evaluateObject(obj, playheadMs);
+    for (const channel of animatedChannels(obj.tracks)) {
+      const value =
+        channel === 'color'
+          ? pose.color
+          : channel === 'opacity'
+            ? pose.opacity
+            : pose[channel.split('.')[0] as 'position' | 'rotation' | 'scale'][
+                Number(channel.split('.')[1])
+              ];
+      doc.setChannelKeyframeValue(`object:${id}:${channel.replace('.', ':')}`, playheadMs, value);
+    }
+  }
 }

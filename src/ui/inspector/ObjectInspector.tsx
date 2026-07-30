@@ -1,36 +1,50 @@
+import { useRef } from 'react';
 import { useDocumentStore } from '../../state/documentStore';
 import { useEditorStore } from '../../state/editorStore';
 import { evaluateObject } from '../../animation/evaluate';
-import { applyTransformEdit, addKeyframeAtPlayhead } from '../../animation/transformEdit';
+import { applyTransformEdit, applyColorEdit } from '../../animation/transformEdit';
 import {
   defaultIdle,
   defaultTransition,
-  type Easing,
+  isFormTransition,
   type IdleType,
   type SceneObject,
+  type TextureMode,
   type TransitionType,
 } from '../../state/types';
 import { commitCenterOfRotation } from '../../viewport/PivotHandle';
 import { getR3F } from '../../render/renderApi';
+import { getMediaUrl } from '../../io/mediaCache';
+import { importMediaFile } from '../../io/importMedia';
 import { ColorField, NumberField, Row, Section, Slider, Vec3Field } from './fields';
 import styles from './inspector.module.css';
 
-const EASINGS: Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'step'];
 const IDLE_TYPES: IdleType[] = ['none', 'rotate', 'flicker', 'pulse', 'wiggle'];
-const TRANSITION_TYPES: TransitionType[] = ['none', 'pop', 'fade', 'digital', 'flicker'];
+const TRANSITION_TYPES: TransitionType[] = [
+  'none',
+  'pop',
+  'fade',
+  'digital',
+  'flicker',
+  'voxel form',
+  'particle form',
+  'polygon form',
+];
 
 export function ObjectInspector({ object }: { object: SceneObject }) {
   const setObjectName = useDocumentStore((s) => s.setObjectName);
   const setObjectVisible = useDocumentStore((s) => s.setObjectVisible);
   const setMaterial = useDocumentStore((s) => s.setObjectMaterial);
-  const removeKeyframe = useDocumentStore((s) => s.removeKeyframe);
-  const setKeyframeInterpolation = useDocumentStore((s) => s.setKeyframeInterpolation);
+  const setChannelKeyframeValue = useDocumentStore((s) => s.setChannelKeyframeValue);
   const setObjectIdle = useDocumentStore((s) => s.setObjectIdle);
   const setObjectTransition = useDocumentStore((s) => s.setObjectTransition);
   const playheadMs = useEditorStore((s) => s.playheadMs);
-  const setPlayhead = useEditorStore((s) => s.setPlayhead);
   const corEditId = useEditorStore((s) => s.corEditId);
   const setCorEditId = useEditorStore((s) => s.setCorEditId);
+  const textureMedia = useDocumentStore((s) =>
+    object.material.textureAssetId ? s.project.media[object.material.textureAssetId] : undefined,
+  );
+  const textureInput = useRef<HTMLInputElement>(null);
 
   const { id, material } = object;
   const idle = object.idle ?? defaultIdle();
@@ -38,7 +52,7 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
   const endAnim = object.endAnim ?? defaultTransition();
   // Show the pose at the current playhead so edits reflect (and update) keyframes.
   const t = evaluateObject(object, playheadMs);
-  const animated = object.keyframes.length > 0;
+  const animated = Object.keys(object.tracks).length > 0;
   const isGroup = object.type === 'group';
 
   return (
@@ -63,20 +77,32 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
           <Vec3Field
             value={t.position}
             suffix="mm"
-            onCommit={(v) => applyTransformEdit(id, { ...t, position: v })}
+            bindKeyBase={`object:${id}:position`}
+            keyframeKeyBase={`object:${id}:position`}
+            onCommit={(v) =>
+              applyTransformEdit(id, { position: v, rotation: t.rotation, scale: t.scale })
+            }
           />
         </Row>
         <Row label="Rotation">
           <Vec3Field
             value={t.rotation}
             suffix="°"
-            onCommit={(v) => applyTransformEdit(id, { ...t, rotation: v })}
+            bindKeyBase={`object:${id}:rotation`}
+            keyframeKeyBase={`object:${id}:rotation`}
+            onCommit={(v) =>
+              applyTransformEdit(id, { position: t.position, rotation: v, scale: t.scale })
+            }
           />
         </Row>
         <Row label="Scale">
           <Vec3Field
             value={t.scale}
-            onCommit={(v) => applyTransformEdit(id, { ...t, scale: v })}
+            bindKeyBase={`object:${id}:scale`}
+            keyframeKeyBase={`object:${id}:scale`}
+            onCommit={(v) =>
+              applyTransformEdit(id, { position: t.position, rotation: t.rotation, scale: v })
+            }
           />
         </Row>
         <button
@@ -101,14 +127,20 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
         <Section title="Material">
           <Row label="Color">
             <ColorField
-              value={material.color}
-              onChange={(c) => setMaterial(id, { color: c })}
+              value={t.color}
+              onChange={(c) => applyColorEdit(id, c)}
+              keyframeKey={`object:${id}:color`}
             />
           </Row>
           <Row label="Opacity">
             <Slider
-              value={material.opacity}
-              onChange={(v) => setMaterial(id, { opacity: v })}
+              value={t.opacity}
+              keyframeKey={`object:${id}:opacity`}
+              onChange={(v) => {
+                if ((object.tracks.opacity?.length ?? 0) > 0)
+                  setChannelKeyframeValue(`object:${id}:opacity`, playheadMs, v);
+                else setMaterial(id, { opacity: v });
+              }}
               display={(v) => `${Math.round(v * 100)}%`}
             />
           </Row>
@@ -124,6 +156,58 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
               onChange={(v) => setMaterial(id, { roughness: v })}
             />
           </Row>
+          <Row label="Texture">
+            {textureMedia ? (
+              <div className={styles.texturePreview}>
+                <img src={getMediaUrl(textureMedia.id)} alt={textureMedia.name} />
+                <button onClick={() => setMaterial(id, { textureAssetId: undefined })}>
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => textureInput.current?.click()}>Upload image</button>
+            )}
+            <input
+              ref={textureInput}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  void importMediaFile(file, 'image').then((mediaId) =>
+                    setMaterial(id, { textureAssetId: mediaId }),
+                  );
+                }
+                e.target.value = '';
+              }}
+            />
+          </Row>
+          {textureMedia && (
+            <>
+              <Row label="Mapping">
+                <select
+                  className={styles.fullSelect}
+                  value={material.textureMode ?? 'fill'}
+                  onChange={(e) =>
+                    setMaterial(id, { textureMode: e.target.value as TextureMode })
+                  }
+                >
+                  <option value="fill">Fill</option>
+                  <option value="tile">Tile</option>
+                </select>
+              </Row>
+              {(material.textureMode ?? 'fill') === 'tile' && (
+                <Row label="Tile size">
+                  <NumberField
+                    value={material.textureScale ?? 100}
+                    suffix="mm"
+                    onCommit={(v) => setMaterial(id, { textureScale: Math.max(1, v) })}
+                  />
+                </Row>
+              )}
+            </>
+          )}
         </Section>
       )}
 
@@ -197,6 +281,28 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
               />
             </Row>
           )}
+          {isFormTransition(startAnim.type) && (
+            <>
+              <Row label="Density">
+                <Slider
+                  value={startAnim.density ?? 0.5}
+                  onChange={(v) => setObjectTransition(id, 'start', { density: v })}
+                  display={(v) => `${Math.round(v * 100)}%`}
+                />
+              </Row>
+              {startAnim.type !== 'polygon form' && (
+                <Row label="Solid fill">
+                  <input
+                    type="checkbox"
+                    checked={startAnim.solidFill ?? false}
+                    onChange={(e) =>
+                      setObjectTransition(id, 'start', { solidFill: e.target.checked })
+                    }
+                  />
+                </Row>
+              )}
+            </>
+          )}
 
           <Row label="End">
             <select
@@ -226,60 +332,31 @@ export function ObjectInspector({ object }: { object: SceneObject }) {
               />
             </Row>
           )}
+          {isFormTransition(endAnim.type) && (
+            <>
+              <Row label="Density">
+                <Slider
+                  value={endAnim.density ?? 0.5}
+                  onChange={(v) => setObjectTransition(id, 'end', { density: v })}
+                  display={(v) => `${Math.round(v * 100)}%`}
+                />
+              </Row>
+              {endAnim.type !== 'polygon form' && (
+                <Row label="Solid fill">
+                  <input
+                    type="checkbox"
+                    checked={endAnim.solidFill ?? false}
+                    onChange={(e) =>
+                      setObjectTransition(id, 'end', { solidFill: e.target.checked })
+                    }
+                  />
+                </Row>
+              )}
+            </>
+          )}
         </Section>
       )}
 
-      <Section
-        title="Keyframes"
-        right={
-          <button
-            className={styles.smallBtn}
-            onClick={() => addKeyframeAtPlayhead(id)}
-            title="Add keyframe at playhead (K)"
-          >
-            ◆ Key
-          </button>
-        }
-      >
-        {object.keyframes.length === 0 ? (
-          <p className={styles.hint}>
-            No keyframes. Move the playhead, pose the object, then press <b>K</b>.
-          </p>
-        ) : (
-          <div className={styles.kfList}>
-            {object.keyframes.map((k) => (
-              <div key={k.id} className={styles.kfRow}>
-                <button
-                  className={styles.kfTime}
-                  onClick={() => setPlayhead(k.timeMs)}
-                  title="Jump to this keyframe"
-                >
-                  ◆ {(k.timeMs / 1000).toFixed(2)}s
-                </button>
-                <select
-                  value={k.interpolation}
-                  onChange={(e) =>
-                    setKeyframeInterpolation(id, k.id, e.target.value as Easing)
-                  }
-                >
-                  {EASINGS.map((e) => (
-                    <option key={e} value={e}>
-                      {e}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className={styles.kfDelete}
-                  onClick={() => removeKeyframe(id, k.id)}
-                  title="Delete keyframe"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
     </div>
   );
 }

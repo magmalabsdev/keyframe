@@ -1,17 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { ease, evaluateKeyframes, evaluateCamera, isObjectActive } from './evaluate';
-import type { CameraKeyframe, Keyframe, SceneObject } from '../state/types';
+import {
+  ease,
+  evaluateTrack,
+  evaluateColorTrack,
+  evaluateObject,
+  evaluateCamera,
+  isObjectActive,
+} from './evaluate';
+import type { CameraKeyframe, Easing, SceneObject, ValueKeyframe } from '../state/types';
 
-function kf(timeMs: number, x: number, partial: Partial<Keyframe> = {}): Keyframe {
-  return {
-    id: `k${timeMs}`,
-    timeMs,
-    position: [x, 0, 0],
-    rotation: [0, 0, 0],
-    scale: [1, 1, 1],
-    interpolation: 'linear',
-    ...partial,
-  };
+function vk(timeMs: number, value: number | string, interpolation: Easing = 'linear'): ValueKeyframe {
+  return { id: `k${timeMs}`, timeMs, value, interpolation };
 }
 
 describe('ease', () => {
@@ -29,30 +28,70 @@ describe('ease', () => {
   });
 });
 
-describe('evaluateKeyframes', () => {
+describe('evaluateTrack', () => {
+  it('returns the fallback for an empty/undefined track', () => {
+    expect(evaluateTrack(undefined, 100, 7)).toBe(7);
+    expect(evaluateTrack([], 100, 7)).toBe(7);
+  });
+
   it('clamps before the first and after the last keyframe', () => {
-    const keys = [kf(1000, 10), kf(2000, 20)];
-    expect(evaluateKeyframes(keys, 0).position[0]).toBe(10);
-    expect(evaluateKeyframes(keys, 5000).position[0]).toBe(20);
+    const t = [vk(1000, 10), vk(2000, 20)];
+    expect(evaluateTrack(t, 0, 0)).toBe(10);
+    expect(evaluateTrack(t, 5000, 0)).toBe(20);
   });
 
-  it('linearly interpolates between two keyframes', () => {
-    const keys = [kf(1000, 0), kf(2000, 100)];
-    expect(evaluateKeyframes(keys, 1500).position[0]).toBeCloseTo(50, 5);
-    expect(evaluateKeyframes(keys, 1250).position[0]).toBeCloseTo(25, 5);
-  });
-
-  it('selects the correct segment across many keyframes', () => {
-    const keys = [kf(0, 0), kf(1000, 10), kf(2000, 30), kf(3000, 30)];
-    expect(evaluateKeyframes(keys, 1500).position[0]).toBeCloseTo(20, 5);
-    expect(evaluateKeyframes(keys, 2500).position[0]).toBeCloseTo(30, 5);
+  it('linearly interpolates and selects the right segment', () => {
+    const t = [vk(0, 0), vk(1000, 10), vk(2000, 30)];
+    expect(evaluateTrack(t, 500, 0)).toBeCloseTo(5, 5);
+    expect(evaluateTrack(t, 1500, 0)).toBeCloseTo(20, 5);
   });
 
   it('honors the from-keyframe easing (step holds)', () => {
-    const keys = [kf(0, 0, { interpolation: 'step' }), kf(1000, 100)];
-    expect(evaluateKeyframes(keys, 500).position[0]).toBe(0);
-    expect(evaluateKeyframes(keys, 999).position[0]).toBe(0);
-    expect(evaluateKeyframes(keys, 1000).position[0]).toBe(100);
+    const t = [vk(0, 0, 'step'), vk(1000, 100)];
+    expect(evaluateTrack(t, 500, 0)).toBe(0);
+    expect(evaluateTrack(t, 1000, 0)).toBe(100);
+  });
+});
+
+describe('evaluateColorTrack', () => {
+  it('interpolates hex colors', () => {
+    const t = [vk(1000, '#000000'), vk(2000, '#ffffff')];
+    expect(evaluateColorTrack(t, 1500, '#888888')).toBe('#808080');
+    expect(evaluateColorTrack(undefined, 1500, '#ff0000')).toBe('#ff0000');
+  });
+});
+
+describe('evaluateObject (per-channel tracks)', () => {
+  const base: SceneObject = {
+    id: 'o',
+    name: 'o',
+    type: 'mesh',
+    parentId: null,
+    assetId: 'a',
+    visible: true,
+    lifetime: { startMs: 0, endMs: 4000 },
+    transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    tracks: {},
+    centerOfRotation: [0, 0, 0],
+    material: { color: '#abcdef', opacity: 0.5, metalness: 0, roughness: 1 },
+  };
+
+  it('falls back to the base transform/material when a channel is unkeyed', () => {
+    const p = evaluateObject(base, 1000);
+    expect(p.position).toEqual([1, 2, 3]);
+    expect(p.color).toBe('#abcdef');
+    expect(p.opacity).toBe(0.5);
+  });
+
+  it('animates channels independently', () => {
+    const obj: SceneObject = {
+      ...base,
+      tracks: { 'position.0': [vk(0, 0), vk(1000, 100)] },
+    };
+    // x animates; y/z stay at base.
+    expect(evaluateObject(obj, 500).position[0]).toBeCloseTo(50, 5);
+    expect(evaluateObject(obj, 500).position[1]).toBe(2);
+    expect(evaluateObject(obj, 500).position[2]).toBe(3);
   });
 });
 

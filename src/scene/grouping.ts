@@ -24,6 +24,23 @@ export function selectExact(id: string): void {
   useEditorStore.getState().setSelection([id]);
 }
 
+/**
+ * Ctrl/Cmd-click selection: select every instance of the clicked part — all
+ * objects sharing its asset (duplicates/pastes keep the same assetId). Falls
+ * back to selecting just the clicked object if it has no asset.
+ */
+export function selectAllInstances(id: string): void {
+  const objects = activeObjects();
+  const clicked = objects.find((o) => o.id === id);
+  const assetId = clicked?.assetId;
+  if (!assetId) {
+    useEditorStore.getState().setSelection([id]);
+    return;
+  }
+  const ids = objects.filter((o) => o.assetId === assetId).map((o) => o.id);
+  useEditorStore.getState().setSelection(ids);
+}
+
 /** Group the current multi-selection into a new group at their combined center. */
 export function groupSelection(): void {
   const ids = useEditorStore.getState().selectedIds;
@@ -61,7 +78,7 @@ export function groupSelection(): void {
       endMs: Math.max(...objs.map((o) => o.lifetime.endMs)),
     },
     transform: { position: centerArr, rotation: [0, 0, 0], scale: [1, 1, 1] },
-    keyframes: [],
+    tracks: {},
     centerOfRotation: [0, 0, 0],
     material: defaultMaterial(),
   };

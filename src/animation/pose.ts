@@ -1,20 +1,40 @@
 import {
   defaultIdle,
   defaultTransition,
+  isFormTransition,
   type SceneObject,
   type TransitionType,
   type Vec3,
 } from '../state/types';
+import { objectBindingOverrides } from '../state/bindings';
 import { evaluateObject, isObjectActive } from './evaluate';
+
+/** Active "form" transition: which edge, and assemble progress (0=scattered, 1=assembled). */
+export interface FragmentState {
+  which: 'start' | 'end';
+  progress: number;
+}
+
+/** Per-frame context for resolving time-dependent variable bindings. */
+export interface PoseContext {
+  bindings: Record<string, string>;
+  /** Resolved variable values at this time (includes `time`). */
+  vars: Record<string, number>;
+}
 
 /** The full visual state of an object at a time: keyframes + idle + transitions. */
 export interface Pose {
   position: Vec3;
   rotation: Vec3;
   scale: Vec3;
-  /** Multiplier applied to the object's material opacity (fade/flicker). */
+  /** Keyframed/base material opacity (before opacityMul). */
+  opacity: number;
+  /** Multiplier applied to opacity by idle/transition effects (fade/flicker). */
   opacityMul: number;
   visible: boolean;
+  color: string;
+  /** Set when a chunked "form" transition is active; drives fragment rendering. */
+  fragment: FragmentState | null;
 }
 
 function clamp01(p: number): number {
@@ -33,6 +53,9 @@ function transitionFactor(
   pRaw: number,
 ): { scaleMul: number; opacityMul: number } {
   const p = clamp01(pRaw);
+  // Form transitions render as chunks (handled by the fragment renderer), so
+  // they leave the underlying transform untouched here.
+  if (isFormTransition(type)) return { scaleMul: 1, opacityMul: 1 };
   switch (type) {
     case 'pop':
       return { scaleMul: Math.max(0, easeOutBack(p)), opacityMul: clamp01(p * 3) };
@@ -50,13 +73,26 @@ function transitionFactor(
   }
 }
 
-export function poseObjectAtTime(object: SceneObject, timeMs: number): Pose {
+export function poseObjectAtTime(
+  object: SceneObject,
+  timeMs: number,
+  ctx?: PoseContext,
+): Pose {
   const base = evaluateObject(object, timeMs);
   const active = isObjectActive(object, timeMs);
   const position = base.position.slice() as Vec3;
   let rotation = base.rotation.slice() as Vec3;
   let scale = base.scale.slice() as Vec3;
   let opacityMul = 1;
+  let fragment: FragmentState | null = null;
+
+  // Variable bindings override keyframed/base transform channels (binding > keyframe > base).
+  if (ctx && ctx.bindings) {
+    const ov = objectBindingOverrides(ctx.bindings, object.id, ctx.vars);
+    if (ov.position) for (const a in ov.position) position[+a] = ov.position[+a]!;
+    if (ov.rotation) for (const a in ov.rotation) rotation[+a] = ov.rotation[+a]!;
+    if (ov.scale) for (const a in ov.scale) scale[+a] = ov.scale[+a]!;
+  }
 
   const { startMs: start, endMs: end } = object.lifetime;
 
@@ -88,6 +124,7 @@ export function poseObjectAtTime(object: SceneObject, timeMs: number): Pose {
       const f = transitionFactor(startA.type, p);
       scale = [scale[0] * f.scaleMul, scale[1] * f.scaleMul, scale[2] * f.scaleMul];
       opacityMul *= f.opacityMul;
+      if (isFormTransition(startA.type)) fragment = { which: 'start', progress: clamp01(p) };
     }
     const endA = object.endAnim ?? defaultTransition();
     if (endA.type !== 'none' && timeMs > end - endA.durationMs) {
@@ -95,8 +132,18 @@ export function poseObjectAtTime(object: SceneObject, timeMs: number): Pose {
       const f = transitionFactor(endA.type, p);
       scale = [scale[0] * f.scaleMul, scale[1] * f.scaleMul, scale[2] * f.scaleMul];
       opacityMul *= f.opacityMul;
+      if (isFormTransition(endA.type)) fragment = { which: 'end', progress: clamp01(p) };
     }
   }
 
-  return { position, rotation, scale, opacityMul, visible: object.visible && active };
+  return {
+    position,
+    rotation,
+    scale,
+    opacity: base.opacity,
+    opacityMul,
+    visible: object.visible && active,
+    color: base.color,
+    fragment,
+  };
 }

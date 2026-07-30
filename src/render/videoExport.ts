@@ -2,7 +2,20 @@ import * as THREE from 'three';
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 import { getActiveScene, useDocumentStore } from '../state/documentStore';
 import { applySceneAtTime } from './applyScene';
+import { getBackgroundVideoElement } from './mediaTextures';
 import { getR3F } from './renderApi';
+
+/** Seeks a video element to `timeSec` and waits for the frame to update. */
+function seekVideo(video: HTMLVideoElement, timeSec: number): Promise<void> {
+  return new Promise((resolve) => {
+    const onSeeked = () => {
+      video.removeEventListener('seeked', onSeeked);
+      resolve();
+    };
+    video.addEventListener('seeked', onSeeked);
+    video.currentTime = timeSec;
+  });
+}
 
 export interface ExportOptions {
   fps?: number;
@@ -65,8 +78,16 @@ export async function exportVideo(opts: ExportOptions = {}): Promise<void> {
   const camera = root.camera as THREE.PerspectiveCamera;
   const setFrameloop = root.setFrameloop;
 
-  const sceneData = getActiveScene(useDocumentStore.getState().project);
+  const project = useDocumentStore.getState().project;
+  const sceneData = getActiveScene(project);
   const frameCount = Math.max(1, Math.round((sceneData.durationMs / 1000) * fps));
+
+  const backgroundMedia = sceneData.settings.backgroundMediaId
+    ? project.media[sceneData.settings.backgroundMediaId]
+    : undefined;
+  const backgroundVideo =
+    backgroundMedia?.kind === 'video' ? getBackgroundVideoElement(backgroundMedia) : undefined;
+  if (backgroundVideo) backgroundVideo.pause();
 
   let chosen: (typeof CODECS)[number] | null = null;
   for (const c of CODECS) {
@@ -128,7 +149,10 @@ export async function exportVideo(opts: ExportOptions = {}): Promise<void> {
     for (let i = 0; i < frameCount; i++) {
       if (encodeError) throw encodeError;
       const timeMs = (i / fps) * 1000;
-      applySceneAtTime(sceneData, timeMs, threeScene, camera);
+      if (backgroundVideo && backgroundVideo.duration > 0) {
+        await seekVideo(backgroundVideo, (timeMs / 1000) % backgroundVideo.duration);
+      }
+      applySceneAtTime(sceneData, timeMs, threeScene, camera, project);
       gl.render(threeScene, camera);
 
       const frame = new VideoFrame(gl.domElement, {
@@ -160,5 +184,6 @@ export async function exportVideo(opts: ExportOptions = {}): Promise<void> {
     camera.updateProjectionMatrix();
     for (const o of hidden) o.visible = true;
     setFrameloop?.('always');
+    if (backgroundVideo) void backgroundVideo.play().catch(() => {});
   }
 }
