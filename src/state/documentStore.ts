@@ -4,30 +4,45 @@ import { immer } from 'zustand/middleware/immer';
 import { temporal } from 'zundo';
 import { nanoid } from 'nanoid';
 import { current } from 'immer';
-import { createDefaultProject, createDefaultScene } from './defaults';
+import {
+  createAudioTrack,
+  createDefaultProject,
+  createDefaultScene,
+  createGlyphObject,
+  defaultLightParams,
+  defaultSurfaceParams,
+  defaultTextParams,
+} from './defaults';
+import { normalizeWinding } from '../scene/surfaceGeometry';
+import { materialsEqual, type TextEditPlan } from '../scene/textLayout';
 import type {
   Asset,
+  AudioClip,
+  AudioTrack,
   CameraState,
   ChannelKey,
   Easing,
   IdleAnimation,
   Lifetime,
+  LightParams,
   Material,
   MediaAsset,
   Project,
   Scene,
   SceneObject,
   SceneSettings,
+  SurfaceParams,
+  TextParams,
   Transform,
   Transition,
   ValueKeyframe,
   Vec3,
 } from './types';
-import { defaultIdle, defaultTransition, TIME_VARIABLE } from './types';
+import { defaultIdle, defaultTransition, MARKER_COLORS, TIME_VARIABLE } from './types';
 import { evaluateExpr, renameIdentifier, varsMap } from './expr';
 import { recomputeBindings, writeBoundValue } from './bindings';
 import { migrateProject } from './migrate';
-import { evaluateObject } from '../animation/evaluate';
+import { evaluateCamera, evaluateObject } from '../animation/evaluate';
 import { disposeGeometry } from '../io/geometryCache';
 import { resolveVariables, wouldCreateCycle } from '../animation/variables';
 import { useEditorStore } from './editorStore';
@@ -59,6 +74,20 @@ export interface DocumentState {
   /** Merge a partial transform (used by inspector fields). */
   patchObjectTransform: (id: string, patch: Partial<Transform>) => void;
   setObjectMaterial: (id: string, patch: Partial<Material>) => void;
+  /** Patch light params; creates the block from defaults on first use. */
+  setObjectLight: (id: string, patch: Partial<LightParams>) => void;
+  /** Patch surface params; creates the block from defaults on first use. */
+  setObjectSurface: (id: string, patch: Partial<SurfaceParams>) => void;
+  /** Patch text params that need no re-layout (writeOn, fontId). Layout-affecting
+   * edits go through `applyTextEdit` so glyph children reconcile. */
+  setObjectText: (id: string, patch: Partial<TextParams>) => void;
+  /** Apply a reconciliation plan from scene/textLayout.planTextEdit in one undo
+   * step: writes params, deletes/creates glyph children, re-anchors survivors
+   * (preserving user offsets and shifting position keyframes accordingly). */
+  applyTextEdit: (id: string, plan: TextEditPlan) => void;
+  /** Patch a text parent's material and propagate to glyph children that still
+   * match the parent (i.e. haven't been individually recolored). */
+  setTextMaterial: (id: string, patch: Partial<Material>) => void;
   setObjectIdle: (id: string, patch: Partial<IdleAnimation>) => void;
   setObjectTransition: (
     id: string,
@@ -129,13 +158,83 @@ export interface DocumentState {
   /** Delete every channel keyframe of an object at a given time (±epsilon). */
   deleteKeyframesAtTime: (objectId: string, timeMs: number) => void;
   setObjectLifetime: (objectId: string, lifetime: Lifetime) => void;
+  /**
+   * Split at a time: with exactly one selected object, splits only that
+   * object's lifetime; otherwise splits every leaf object AND every audio
+   * clip whose span currently covers the time (batch). One undo step
+   * regardless of how many clips split. No-op for anything not spanning the
+   * time, and for objects with children (ambiguous, deferred).
+   */
+  splitAtPlayhead: (playheadMs: number, selectedIds: string[]) => void;
+  /** Trim a leaf object's lifetime edge to a time, retiming its keyframes to
+   * the new boundary. No-op if the time isn't strictly inside its span. */
+  rippleTrimObjectToPlayhead: (
+    objectId: string,
+    playheadMs: number,
+    edge: 'in' | 'out',
+  ) => void;
+  /** Trim an audio clip's edge to a time (adjusting offset/duration to match).
+   * No-op if the time isn't strictly inside the clip's span. */
+  rippleTrimAudioClipToPlayhead: (
+    trackId: string,
+    clipId: string,
+    playheadMs: number,
+    edge: 'in' | 'out',
+  ) => void;
+  /** Duplicate a leaf object adjacent in time (new clip starts where the
+   * original ends), keyframes shifted by the same span. */
+  duplicateObjectAdjacent: (objectId: string) => void;
+  /** Duplicate an audio clip adjacent in time on the same track. */
+  duplicateAudioClipAdjacent: (trackId: string, clipId: string) => void;
 
+  /** Bake the given pose onto all six camera channels (position + target) at
+   * a time, one keyframe per axis. Used by the "keyframe the camera" buttons
+   * to snapshot the live, hand-navigated camera in one action. */
   upsertCameraKeyframe: (
     timeMs: number,
     state: CameraState,
     interpolation?: Easing,
   ) => void;
-  removeCameraKeyframe: (keyframeId: string) => void;
+  /** Remove every camera channel's keyframe at a time (±epsilon). */
+  removeCameraKeyframeAtTime: (timeMs: number) => void;
+  /** Patch the camera's fallback pose for axes with no keyframes. */
+  patchCameraDefault: (patch: Partial<CameraState>) => void;
+
+  /** Audio tracks + clips (background music, sound effects) on the timeline. */
+  /** Timeline markers. Adding at an occupied time is a no-op. */
+  addMarker: (timeMs: number, name?: string) => void;
+  renameMarker: (id: string, name: string) => void;
+  setMarkerColor: (id: string, color: string) => void;
+  moveMarker: (id: string, timeMs: number) => void;
+  removeMarker: (id: string) => void;
+
+  addAudioTrack: (name?: string) => void;
+  removeAudioTrack: (trackId: string) => void;
+  renameAudioTrack: (trackId: string, name: string) => void;
+  setAudioTrackGain: (trackId: string, gain: number) => void;
+  setAudioTrackMuted: (trackId: string, muted: boolean) => void;
+  /** Add a placed clip to a track (kept sorted by start time). */
+  addAudioClip: (trackId: string, clip: AudioClip) => void;
+  removeAudioClip: (trackId: string, clipId: string) => void;
+  /** Move a clip along the timeline (drag body), keeping its trim/length. */
+  setAudioClipTime: (trackId: string, clipId: string, startMs: number) => void;
+  /**
+   * Set a clip's placement + trim in one step (drag either edge). `startMs`
+   * defaults to the current start. All fields are clamped to the source length.
+   */
+  setAudioClipRange: (
+    trackId: string,
+    clipId: string,
+    range: { startMs?: number; offsetMs: number; durationMs: number },
+  ) => void;
+  setAudioClipGain: (trackId: string, clipId: string, gain: number) => void;
+  setAudioClipLoop: (trackId: string, clipId: string, loop: boolean) => void;
+  /** Move a clip to a different track (drag across lanes). */
+  moveAudioClipToTrack: (
+    fromTrackId: string,
+    clipId: string,
+    toTrackId: string,
+  ) => void;
 
   /** Project-global variables (live-bound numeric fields). */
   addVariable: () => void;
@@ -158,6 +257,14 @@ function activeSceneDraft(project: Project): Scene {
 function findObject(project: Project, id: string): SceneObject | undefined {
   return activeSceneDraft(project).objects.find((o) => o.id === id);
 }
+
+function findAudioTrack(project: Project, trackId: string): AudioTrack | undefined {
+  const scene = activeSceneDraft(project);
+  scene.audioTracks ??= [];
+  return scene.audioTracks.find((t) => t.id === trackId);
+}
+
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
 /** Interpolation modes the per-value diamond cycles through, in order. */
 const EASE_ORDER: Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'step'];
@@ -192,7 +299,31 @@ function resolveChannel(
         const pose = evaluateObject(obj, time);
         if (channel === 'color') return pose.color;
         if (channel === 'opacity') return pose.opacity;
+        if (channel === 'text.writeOn') return pose.writeOn ?? 1;
+        if (channel.startsWith('light.')) {
+          const light = pose.light ?? defaultLightParams();
+          if (channel === 'light.color') return light.color;
+          if (channel === 'light.intensity') return light.intensity;
+          if (channel === 'light.spread') return light.spreadDeg;
+          if (channel === 'light.softness') return light.softness;
+          return light.direction[Number(channel.split('.')[2])];
+        }
         const [name, axis] = channel.split('.') as ['position' | 'rotation' | 'scale', string];
+        return pose[name][Number(axis)];
+      },
+    };
+  }
+  if (parts[0] === 'camera') {
+    const cam = activeSceneDraft(project).camera;
+    const channel = `${parts[1]}.${parts[2]}` as ChannelKey;
+    cam.tracks ??= {};
+    cam.tracks[channel] ??= [];
+    return {
+      track: cam.tracks[channel]!,
+      currentValue: () => {
+        const time = useEditorStore.getState().playheadMs;
+        const pose = evaluateCamera(cam.default, cam.tracks, time);
+        const [name, axis] = channel.split('.') as ['position' | 'target', string];
         return pose[name][Number(axis)];
       },
     };
@@ -200,9 +331,15 @@ function resolveChannel(
   return undefined;
 }
 
-/** Removes empty channel tracks from an object so it reads as un-animated. */
+/** Removes empty channel tracks from an object (or the camera) so it reads as un-animated. */
 function pruneEmptyTracks(project: Project, channelKey: string): void {
   const parts = channelKey.split(':');
+  if (parts[0] === 'camera') {
+    const cam = activeSceneDraft(project).camera;
+    const channel = `${parts[1]}.${parts[2]}` as ChannelKey;
+    if (cam.tracks?.[channel]?.length === 0) delete cam.tracks[channel];
+    return;
+  }
   if (parts[0] !== 'object') return;
   const obj = findObject(project, parts[1]);
   if (!obj?.tracks) return;
@@ -268,6 +405,30 @@ export const useDocumentStore = create<DocumentState>()(
           }
           const removedObjs = scene.objects.filter((o) => remove.has(o.id));
           scene.objects = scene.objects.filter((o) => !remove.has(o.id));
+          // Deleting a glyph directly also removes its character from the
+          // parent text (kept in sync; surviving glyphs are re-indexed but not
+          // re-laid-out — the gap stays until the next text edit).
+          const glyphIndexesByParent = new Map<string, number[]>();
+          for (const o of removedObjs) {
+            if (o.type === 'glyph' && o.glyph && o.parentId && !remove.has(o.parentId)) {
+              const list = glyphIndexesByParent.get(o.parentId) ?? [];
+              list.push(o.glyph.index);
+              glyphIndexesByParent.set(o.parentId, list);
+            }
+          }
+          for (const [parentId, indexes] of glyphIndexesByParent) {
+            const parent = scene.objects.find((o) => o.id === parentId);
+            if (!parent?.text) continue;
+            indexes.sort((a, b) => b - a);
+            const chars = Array.from(parent.text.text);
+            for (const i of indexes) if (i < chars.length) chars.splice(i, 1);
+            parent.text.text = chars.join('');
+            for (const g of scene.objects) {
+              if (g.parentId === parentId && g.type === 'glyph' && g.glyph) {
+                g.glyph.index -= indexes.filter((i) => i < g.glyph!.index).length;
+              }
+            }
+          }
           // Drop any variable bindings that targeted the removed objects.
           for (const key of Object.keys(s.project.bindings ?? {})) {
             const parts = key.split(':');
@@ -316,6 +477,87 @@ export const useDocumentStore = create<DocumentState>()(
         set((s) => {
           const obj = findObject(s.project, id);
           if (obj) obj.material = { ...obj.material, ...patch };
+        }),
+
+      setObjectLight: (id, patch) =>
+        set((s) => {
+          const obj = findObject(s.project, id);
+          if (obj) obj.light = { ...(obj.light ?? defaultLightParams()), ...patch };
+        }),
+
+      setObjectSurface: (id, patch) =>
+        set((s) => {
+          const obj = findObject(s.project, id);
+          if (!obj) return;
+          // Normalize winding here so the CCW invariant holds no matter which
+          // edit path (inspector, vertex handles, presets) wrote the points.
+          const next = patch.points
+            ? { ...patch, points: normalizeWinding(patch.points) }
+            : patch;
+          obj.surface = { ...(obj.surface ?? defaultSurfaceParams()), ...next };
+        }),
+
+      setObjectText: (id, patch) =>
+        set((s) => {
+          const obj = findObject(s.project, id);
+          if (!obj || obj.type !== 'text') return;
+          obj.text = { ...(obj.text ?? defaultTextParams()), ...patch };
+        }),
+
+      applyTextEdit: (id, plan) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          const obj = scene.objects.find((o) => o.id === id);
+          if (!obj || obj.type !== 'text') return;
+          obj.text = { ...plan.params };
+          if (plan.removedIds.length > 0) {
+            const removed = new Set(plan.removedIds);
+            scene.objects = scene.objects.filter((o) => !removed.has(o.id));
+            for (const key of Object.keys(s.project.bindings ?? {})) {
+              const parts = key.split(':');
+              if (parts[0] === 'object' && removed.has(parts[1])) {
+                delete s.project.bindings[key];
+              }
+            }
+          }
+          const axisChannels: ChannelKey[] = ['position.0', 'position.1', 'position.2'];
+          for (const m of plan.moved) {
+            const g = scene.objects.find((o) => o.id === m.id);
+            if (!g?.glyph) continue;
+            const delta: Vec3 = [
+              m.layoutPos[0] - g.glyph.layoutPos[0],
+              m.layoutPos[1] - g.glyph.layoutPos[1],
+              m.layoutPos[2] - g.glyph.layoutPos[2],
+            ];
+            g.transform.position = [
+              g.transform.position[0] + delta[0],
+              g.transform.position[1] + delta[1],
+              g.transform.position[2] + delta[2],
+            ];
+            axisChannels.forEach((ch, axis) => {
+              const track = g.tracks?.[ch];
+              if (track) for (const kf of track) kf.value = (kf.value as number) + delta[axis];
+            });
+            g.glyph.index = m.index;
+            g.glyph.layoutPos = [...m.layoutPos];
+          }
+          for (const a of plan.added) {
+            scene.objects.push(createGlyphObject(obj, a.char, a.index, a.layoutPos));
+          }
+        }),
+
+      setTextMaterial: (id, patch) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          const obj = scene.objects.find((o) => o.id === id);
+          if (!obj || obj.type !== 'text') return;
+          const prev = { ...obj.material };
+          obj.material = { ...obj.material, ...patch };
+          for (const g of scene.objects) {
+            if (g.parentId === id && g.type === 'glyph' && materialsEqual(g.material, prev)) {
+              g.material = { ...g.material, ...patch };
+            }
+          }
         }),
 
       setObjectIdle: (id, patch) =>
@@ -454,7 +696,13 @@ export const useDocumentStore = create<DocumentState>()(
               if (track) for (const k of track) k.id = nanoid();
             }
           }
-          for (const k of clone.camera.keyframes) k.id = nanoid();
+          for (const track of Object.values(clone.camera.tracks)) {
+            if (track) for (const k of track) k.id = nanoid();
+          }
+          for (const t of clone.audioTracks ?? []) {
+            t.id = nanoid();
+            for (const c of t.clips) c.id = nanoid();
+          }
           s.project.scenes.push(clone);
           s.project.activeSceneId = clone.id;
         }),
@@ -573,31 +821,314 @@ export const useDocumentStore = create<DocumentState>()(
           }
         }),
 
-      upsertCameraKeyframe: (timeMs, state, interpolation = 'linear') =>
+      splitAtPlayhead: (playheadMs, selectedIds) =>
         set((s) => {
-          const cam = activeSceneDraft(s.project).camera;
-          const existing = cam.keyframes.find(
-            (k) => Math.abs(k.timeMs - timeMs) <= KEYFRAME_EPSILON,
-          );
-          if (existing) {
-            existing.position = state.position;
-            existing.target = state.target;
-          } else {
-            cam.keyframes.push({
-              id: nanoid(),
-              timeMs,
-              interpolation,
-              position: state.position,
-              target: state.target,
-            });
-            cam.keyframes.sort((a, b) => a.timeMs - b.timeMs);
+          const scene = activeSceneDraft(s.project);
+          const isLeaf = (id: string) => !scene.objects.some((o) => o.parentId === id);
+
+          const targetObjects =
+            selectedIds.length === 1
+              ? scene.objects.filter((o) => o.id === selectedIds[0])
+              : scene.objects.filter(
+                  (o) => o.lifetime.startMs < playheadMs && playheadMs < o.lifetime.endMs,
+                );
+
+          for (const obj of targetObjects) {
+            if (!(obj.lifetime.startMs < playheadMs && playheadMs < obj.lifetime.endMs)) continue;
+            if (!isLeaf(obj.id)) continue;
+
+            const clone = structuredClone(current(obj)) as SceneObject;
+            clone.id = nanoid();
+            clone.lifetime = { startMs: playheadMs, endMs: obj.lifetime.endMs };
+            obj.lifetime = { startMs: obj.lifetime.startMs, endMs: playheadMs };
+
+            // Partition each channel's keyframes: earlier ones stay on the
+            // original, later (or exactly-at-the-cut) ones move to the clone
+            // with fresh ids so they never collide with the original's.
+            for (const key of Object.keys(obj.tracks) as ChannelKey[]) {
+              const track = obj.tracks[key];
+              if (!track) continue;
+              const before = track.filter((k) => k.timeMs < playheadMs);
+              const atOrAfter = track
+                .filter((k) => k.timeMs >= playheadMs)
+                .map((k) => ({ ...k, id: nanoid() }));
+              if (before.length) obj.tracks[key] = before;
+              else delete obj.tracks[key];
+              if (atOrAfter.length) clone.tracks[key] = atOrAfter;
+              else delete clone.tracks[key];
+            }
+            scene.objects.push(clone);
+          }
+
+          // Audio clips only split in the batch case — a single selected
+          // object's split is scoped to that object alone.
+          if (selectedIds.length !== 1) {
+            for (const track of scene.audioTracks ?? []) {
+              for (const clip of [...track.clips]) {
+                const clipEnd = clip.startMs + clip.durationMs;
+                if (!(clip.startMs < playheadMs && playheadMs < clipEnd)) continue;
+                const firstDur = playheadMs - clip.startMs;
+                const newClip: AudioClip = {
+                  ...clip,
+                  id: nanoid(),
+                  startMs: playheadMs,
+                  offsetMs: clip.offsetMs + firstDur,
+                  durationMs: clip.durationMs - firstDur,
+                };
+                clip.durationMs = firstDur;
+                track.clips.push(newClip);
+              }
+              track.clips.sort((a, b) => a.startMs - b.startMs);
+            }
           }
         }),
 
-      removeCameraKeyframe: (keyframeId) =>
+      rippleTrimObjectToPlayhead: (objectId, playheadMs, edge) =>
+        set((s) => {
+          const obj = findObject(s.project, objectId);
+          if (!obj) return;
+          const { startMs, endMs } = obj.lifetime;
+          if (!(playheadMs > startMs && playheadMs < endMs)) return;
+          if (edge === 'in') {
+            obj.lifetime = { startMs: playheadMs, endMs };
+            for (const track of Object.values(obj.tracks)) {
+              if (!track) continue;
+              for (const k of track) if (k.timeMs < playheadMs) k.timeMs = playheadMs;
+              track.sort((a, b) => a.timeMs - b.timeMs);
+            }
+          } else {
+            obj.lifetime = { startMs, endMs: playheadMs };
+            for (const track of Object.values(obj.tracks)) {
+              if (!track) continue;
+              for (const k of track) if (k.timeMs > playheadMs) k.timeMs = playheadMs;
+              track.sort((a, b) => a.timeMs - b.timeMs);
+            }
+          }
+        }),
+
+      rippleTrimAudioClipToPlayhead: (trackId, clipId, playheadMs, edge) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          const c = t?.clips.find((x) => x.id === clipId);
+          if (!t || !c) return;
+          const clipStart = c.startMs;
+          const clipEnd = c.startMs + c.durationMs;
+          if (!(playheadMs > clipStart && playheadMs < clipEnd)) return;
+          if (edge === 'in') {
+            const delta = playheadMs - clipStart;
+            c.startMs = playheadMs;
+            c.offsetMs += delta;
+            c.durationMs -= delta;
+          } else {
+            c.durationMs = playheadMs - clipStart;
+          }
+          t.clips.sort((a, b) => a.startMs - b.startMs);
+        }),
+
+      duplicateObjectAdjacent: (objectId) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          const obj = scene.objects.find((o) => o.id === objectId);
+          if (!obj) return;
+          if (scene.objects.some((o) => o.parentId === objectId)) return; // leaf-only
+          const clone = structuredClone(current(obj)) as SceneObject;
+          clone.id = nanoid();
+          const span = obj.lifetime.endMs - obj.lifetime.startMs;
+          clone.lifetime = { startMs: obj.lifetime.endMs, endMs: obj.lifetime.endMs + span };
+          for (const track of Object.values(clone.tracks)) {
+            if (!track) continue;
+            for (const k of track) {
+              k.id = nanoid();
+              k.timeMs += span;
+            }
+          }
+          scene.objects.push(clone);
+        }),
+
+      duplicateAudioClipAdjacent: (trackId, clipId) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          const c = t?.clips.find((x) => x.id === clipId);
+          if (!t || !c) return;
+          const clone: AudioClip = { ...c, id: nanoid(), startMs: c.startMs + c.durationMs };
+          t.clips.push(clone);
+          t.clips.sort((a, b) => a.startMs - b.startMs);
+        }),
+
+      upsertCameraKeyframe: (timeMs, state, interpolation = 'linear') =>
         set((s) => {
           const cam = activeSceneDraft(s.project).camera;
-          cam.keyframes = cam.keyframes.filter((k) => k.id !== keyframeId);
+          cam.tracks ??= {};
+          const axes: [ChannelKey, number][] = [
+            ['position.0', state.position[0]],
+            ['position.1', state.position[1]],
+            ['position.2', state.position[2]],
+            ['target.0', state.target[0]],
+            ['target.1', state.target[1]],
+            ['target.2', state.target[2]],
+          ];
+          for (const [channel, value] of axes) {
+            const track = (cam.tracks[channel] ??= []);
+            const existing = track.find(
+              (k) => Math.abs(k.timeMs - timeMs) <= KEYFRAME_EPSILON,
+            );
+            if (existing) existing.value = value;
+            else {
+              track.push({ id: nanoid(), timeMs, value, interpolation });
+              track.sort((a, b) => a.timeMs - b.timeMs);
+            }
+          }
+        }),
+
+      removeCameraKeyframeAtTime: (timeMs) =>
+        set((s) => {
+          const cam = activeSceneDraft(s.project).camera;
+          if (!cam.tracks) return;
+          for (const key of Object.keys(cam.tracks) as ChannelKey[]) {
+            const track = cam.tracks[key]!;
+            const filtered = track.filter(
+              (k) => Math.abs(k.timeMs - timeMs) > KEYFRAME_EPSILON,
+            );
+            if (filtered.length === 0) delete cam.tracks[key];
+            else cam.tracks[key] = filtered;
+          }
+        }),
+
+      patchCameraDefault: (patch) =>
+        set((s) => {
+          const cam = activeSceneDraft(s.project).camera;
+          cam.default = { ...cam.default, ...patch };
+        }),
+
+      addMarker: (timeMs, name) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          scene.markers ??= [];
+          // One marker per time slot: a second press of M at the same spot
+          // should be a no-op rather than stacking invisible duplicates.
+          if (scene.markers.some((m) => Math.abs(m.timeMs - timeMs) <= KEYFRAME_EPSILON)) {
+            return;
+          }
+          const n = scene.markers.length;
+          scene.markers.push({
+            id: nanoid(),
+            timeMs,
+            name: name ?? `Marker ${n + 1}`,
+            color: MARKER_COLORS[n % MARKER_COLORS.length],
+          });
+          scene.markers.sort((a, b) => a.timeMs - b.timeMs);
+        }),
+
+      renameMarker: (id, name) =>
+        set((s) => {
+          const m = activeSceneDraft(s.project).markers?.find((x) => x.id === id);
+          if (m) m.name = name;
+        }),
+
+      setMarkerColor: (id, color) =>
+        set((s) => {
+          const m = activeSceneDraft(s.project).markers?.find((x) => x.id === id);
+          if (m) m.color = color;
+        }),
+
+      moveMarker: (id, timeMs) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          const m = scene.markers?.find((x) => x.id === id);
+          if (!m) return;
+          m.timeMs = Math.max(0, Math.min(scene.durationMs, timeMs));
+          scene.markers!.sort((a, b) => a.timeMs - b.timeMs);
+        }),
+
+      removeMarker: (id) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          scene.markers = (scene.markers ?? []).filter((m) => m.id !== id);
+        }),
+
+      addAudioTrack: (name) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          scene.audioTracks ??= [];
+          scene.audioTracks.push(
+            createAudioTrack(name ?? `Audio ${scene.audioTracks.length + 1}`),
+          );
+        }),
+      removeAudioTrack: (trackId) =>
+        set((s) => {
+          const scene = activeSceneDraft(s.project);
+          scene.audioTracks = (scene.audioTracks ?? []).filter((t) => t.id !== trackId);
+        }),
+      renameAudioTrack: (trackId, name) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          if (t) t.name = name;
+        }),
+      setAudioTrackGain: (trackId, gain) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          if (t) t.gain = clamp01(gain);
+        }),
+      setAudioTrackMuted: (trackId, muted) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          if (t) t.muted = muted;
+        }),
+      addAudioClip: (trackId, clip) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          if (!t) return;
+          t.clips.push(clip);
+          t.clips.sort((a, b) => a.startMs - b.startMs);
+        }),
+      removeAudioClip: (trackId, clipId) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          if (t) t.clips = t.clips.filter((c) => c.id !== clipId);
+        }),
+      setAudioClipTime: (trackId, clipId, startMs) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          const c = t?.clips.find((x) => x.id === clipId);
+          if (!t || !c) return;
+          c.startMs = Math.max(0, startMs);
+          t.clips.sort((a, b) => a.startMs - b.startMs);
+        }),
+      setAudioClipRange: (trackId, clipId, range) =>
+        set((s) => {
+          const t = findAudioTrack(s.project, trackId);
+          const c = t?.clips.find((x) => x.id === clipId);
+          if (!t || !c) return;
+          // Clamp trim-in inside the source; a non-looping clip can't play past
+          // the end of its source, so its duration is capped to the remainder.
+          const offsetMs = Math.max(0, Math.min(range.offsetMs, c.sourceDurationMs - 1));
+          const maxDur = c.loop ? Infinity : c.sourceDurationMs - offsetMs;
+          c.startMs = Math.max(0, range.startMs ?? c.startMs);
+          c.offsetMs = offsetMs;
+          c.durationMs = Math.max(1, Math.min(range.durationMs, maxDur));
+          t.clips.sort((a, b) => a.startMs - b.startMs);
+        }),
+      setAudioClipGain: (trackId, clipId, gain) =>
+        set((s) => {
+          const c = findAudioTrack(s.project, trackId)?.clips.find((x) => x.id === clipId);
+          if (c) c.gain = clamp01(gain);
+        }),
+      setAudioClipLoop: (trackId, clipId, loop) =>
+        set((s) => {
+          const c = findAudioTrack(s.project, trackId)?.clips.find((x) => x.id === clipId);
+          if (c) c.loop = loop;
+        }),
+      moveAudioClipToTrack: (fromTrackId, clipId, toTrackId) =>
+        set((s) => {
+          if (fromTrackId === toTrackId) return;
+          const from = findAudioTrack(s.project, fromTrackId);
+          const to = findAudioTrack(s.project, toTrackId);
+          if (!from || !to) return;
+          const idx = from.clips.findIndex((c) => c.id === clipId);
+          if (idx < 0) return;
+          const [clip] = from.clips.splice(idx, 1);
+          to.clips.push(clip);
+          to.clips.sort((a, b) => a.startMs - b.startMs);
         }),
 
       addVariable: () =>
@@ -705,6 +1236,10 @@ export function getChannelTrack(
     const obj = getActiveScene(project).objects.find((o) => o.id === parts[1]);
     const channel = (parts.length === 4 ? `${parts[2]}.${parts[3]}` : parts[2]) as ChannelKey;
     return obj?.tracks?.[channel];
+  }
+  if (parts[0] === 'camera') {
+    const channel = `${parts[1]}.${parts[2]}` as ChannelKey;
+    return getActiveScene(project).camera.tracks?.[channel];
   }
   return undefined;
 }

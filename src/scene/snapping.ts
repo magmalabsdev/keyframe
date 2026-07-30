@@ -36,6 +36,8 @@ export function trySnap(
 
   for (const o of objects) {
     if (o.id === targetId || o.parentId) continue; // top-level others only
+    if (o.type === 'light') continue; // don't snap to light proxy spheres
+    if (o.type === 'surface') continue; // a zero-thickness plane has no snappable faces
     const m = scene.getObjectByName(o.id);
     if (!m || !m.visible) continue;
     _otherBox.setFromObject(m);

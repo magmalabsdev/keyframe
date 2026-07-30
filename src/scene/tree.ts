@@ -18,13 +18,17 @@ export function topLevelAncestor(objects: SceneObject[], id: string): string {
   return current ? current.id : id;
 }
 
-/** Depth-first visual order: roots in array order, each followed by its children recursively. */
+/**
+ * Depth-first visual order: roots in array order, each followed by its children
+ * recursively. Any object can hold children (a surface parents to the mesh it
+ * was placed on), not just groups.
+ */
 export function flattenTree(objects: SceneObject[]): SceneObject[] {
   const result: SceneObject[] = [];
   const visit = (parentId: string | null) => {
     for (const o of childrenOf(objects, parentId)) {
       result.push(o);
-      if (o.type === 'group') visit(o.id);
+      visit(o.id);
     }
   };
   visit(null);

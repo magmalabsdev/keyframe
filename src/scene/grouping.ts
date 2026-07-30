@@ -45,7 +45,9 @@ export function selectAllInstances(id: string): void {
 export function groupSelection(): void {
   const ids = useEditorStore.getState().selectedIds;
   if (ids.length < 2) return;
-  const objs = activeObjects().filter((o) => ids.includes(o.id));
+  // Glyphs stay children of their text object (reparenting one would orphan
+  // it from the layout/reconciler), so they can't be grouped away.
+  const objs = activeObjects().filter((o) => ids.includes(o.id) && o.type !== 'glyph');
   if (objs.length < 2) return;
 
   // Center = center of the smallest cuboid holding all selected objects.

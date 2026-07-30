@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import type { Asset, TransitionType } from '../state/types';
-import { getGeometry } from '../io/geometryCache';
+import type { TransitionType } from '../state/types';
 
 /**
  * Builds the "fragmented" geometry for a form transition (voxel / particle /
@@ -12,22 +11,27 @@ import { getGeometry } from '../io/geometryCache';
  *   aAngle    - spin angle applied when fully scattered
  * At progress 1 every chunk sits exactly at its home pose.
  *
- * Generation is expensive, so results are cached per asset+form+density+fill.
+ * Generation is expensive, so results are cached per source+form+density+fill.
+ * The source is identified by a caller-supplied key: an asset id for imported
+ * meshes, or a derived key (glyph, surface polygon) for generated geometry.
+ * Derived keys churn as the user edits, so the cache is an LRU rather than the
+ * unbounded map that finite, stable asset ids allowed.
  */
+const CACHE_LIMIT = 128;
 const cache = new Map<string, THREE.BufferGeometry>();
 
 export type FormType = 'voxel form' | 'particle form' | 'polygon form';
 
 function keyFor(
-  assetId: string,
+  sourceKey: string,
   form: FormType,
   density: number,
   solidFill: boolean,
 ): string {
-  return `${assetId}:${form}:${density.toFixed(3)}:${solidFill ? 1 : 0}`;
+  return `${sourceKey}:${form}:${density.toFixed(3)}:${solidFill ? 1 : 0}`;
 }
 
-/** Small deterministic PRNG so a given asset+config always fragments the same way. */
+/** Small deterministic PRNG so a given source+config always fragments the same way. */
 function makeRng(seedStr: string): () => number {
   let h = 1779033703 ^ seedStr.length;
   for (let i = 0; i < seedStr.length; i++) {
@@ -427,19 +431,27 @@ function buildPolygon(
   return b;
 }
 
-/** Returns the cached fragmented geometry for an asset + form transition config. */
+/**
+ * Returns the cached fragmented geometry for a source geometry + form config.
+ * `sourceKey` identifies the source for caching (an asset id, a glyph key, a
+ * surface polygon key) and seeds the deterministic scatter.
+ */
 export function getFragmentGeometry(
-  asset: Asset,
+  sourceKey: string,
+  src: THREE.BufferGeometry,
   form: FormType,
   density: number,
   solidFill: boolean,
 ): THREE.BufferGeometry {
-  const k = keyFor(asset.id, form, density, solidFill);
+  const k = keyFor(sourceKey, form, density, solidFill);
   const hit = cache.get(k);
-  if (hit) return hit;
+  if (hit) {
+    // Refresh LRU position.
+    cache.delete(k);
+    cache.set(k, hit);
+    return hit;
+  }
 
-  const src = getGeometry(asset.id);
-  if (!src) throw new Error(`No geometry for asset ${asset.id}`);
   const bbox = src.boundingBox ?? new THREE.Box3().setFromBufferAttribute(
     src.getAttribute('position') as THREE.BufferAttribute,
   );
@@ -454,5 +466,12 @@ export function getFragmentGeometry(
 
   const geo = buildGeometry(builder);
   cache.set(k, geo);
+  if (cache.size > CACHE_LIMIT) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest !== undefined) {
+      cache.get(oldest)?.dispose();
+      cache.delete(oldest);
+    }
+  }
   return geo;
 }

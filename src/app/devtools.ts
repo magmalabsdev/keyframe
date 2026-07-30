@@ -9,6 +9,10 @@ import { placeObjectFaceDown } from '../scene/placeOnFace';
 import { trySnap } from '../scene/snapping';
 import { commitCenterOfRotation } from '../viewport/PivotHandle';
 import { poseObjectAtTime } from '../animation/pose';
+import { createSurfaceOnFace } from '../scene/createSurfaceOnFace';
+import { getAudioBuffer, getReversedAudioBuffer } from '../io/audioCache';
+import { getWaveformPeaks } from '../io/waveform';
+import { __debugAudioState } from '../render/audioEngine';
 
 /**
  * Dev-only hooks exposed on window.__kf for automated verification scripts.
@@ -34,5 +38,10 @@ export function installDevtools(): void {
     trySnap,
     commitCenterOfRotation,
     poseObjectAtTime,
+    createSurfaceOnFace,
+    getAudioBuffer,
+    getReversedAudioBuffer,
+    getWaveformPeaks,
+    __debugAudioState,
   };
 }

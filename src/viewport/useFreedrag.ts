@@ -18,7 +18,8 @@ export function consumeJustDragged(): boolean {
 const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
 
-function clientToPlane(
+/** Where a screen point's ray meets a world plane, or null if they're parallel. */
+export function clientToPlane(
   clientX: number,
   clientY: number,
   camera: THREE.Camera,

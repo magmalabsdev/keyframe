@@ -9,13 +9,19 @@ import type { Material } from '../state/types';
  *
  * The live uniform is stashed on `material.userData.uProgress` for the driver.
  */
-export function createFragmentMaterial(material: Material): THREE.MeshStandardMaterial {
+export function createFragmentMaterial(
+  material: Material,
+  /** `side` matters for flat sources (surface polygons) whose chunks are not
+   *  closed solids and would otherwise vanish when seen from behind. */
+  opts: { side?: THREE.Side } = {},
+): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(material.color),
     metalness: material.metalness,
     roughness: material.roughness,
     transparent: true,
     opacity: material.opacity,
+    side: opts.side ?? THREE.FrontSide,
   });
 
   const uProgress = { value: 1 };

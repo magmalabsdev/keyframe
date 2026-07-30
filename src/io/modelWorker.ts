@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { ensureNormals } from './normals';
 
 /** A parsed part shipped back to the main thread as transferable typed arrays. */
 export interface WorkerPart {
@@ -24,8 +25,23 @@ export interface WorkerRequest {
 }
 
 export type WorkerResponse =
-  | { reqId: number; ok: true; format: string; parts: WorkerPart[] }
+  | {
+      reqId: number;
+      ok: true;
+      format: string;
+      /** One chunk of parts. Large assemblies stream several of these. */
+      parts: WorkerPart[];
+      /** Parts posted so far (including this chunk) and the grand total. */
+      loaded: number;
+      total: number;
+      /** True on the final chunk. */
+      done: boolean;
+    }
   | { reqId: number; ok: false; error: string };
+
+/** Post parts back in chunks so the main thread can mount an assembly
+ * progressively (and show a count) instead of committing it all at once. */
+const STREAM_CHUNK = 100;
 
 // ---- Shared geometry helpers (worker-side copies of the old main-thread logic) ----
 
@@ -41,7 +57,8 @@ function mergeObject3D(root: THREE.Object3D): THREE.BufferGeometry {
       if (key !== 'position' && key !== 'normal') g.deleteAttribute(key);
     }
     if (g.index) g = g.toNonIndexed();
-    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    // Repair per geometry before merging so every input has the same attributes.
+    ensureNormals(g);
     geometries.push(g);
   });
   if (geometries.length === 0) throw new Error('No mesh geometry found in file');
@@ -165,7 +182,7 @@ async function loadStep(
     }
     // Keep the geometry indexed (no toNonIndexed) to avoid ~3x vertex inflation.
     if (mesh.index) g.setIndex(Array.from(mesh.index.array));
-    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    ensureNormals(g);
     // Append an index so duplicate solid names (often all "SOLID") stay unique.
     return toPart(`${mesh.name?.trim() || baseName} ${i + 1}`, g, pickStepColor(mesh));
   });
@@ -176,7 +193,9 @@ async function parse(req: WorkerRequest): Promise<{ format: string; parts: Worke
   switch (kind) {
     case 'stl': {
       const g = new STLLoader().parse(buffer);
-      if (!g.getAttribute('normal')) g.computeVertexNormals();
+      // STLLoader always writes a normal attribute, copying the file's facet
+      // normals verbatim — including all-zero ones, which shade to black.
+      ensureNormals(g);
       return { format: 'stl', parts: [toPart(name, g)] };
     }
     case 'obj': {
@@ -196,14 +215,29 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   try {
     const { format, parts } = await parse(req);
     centerParts(parts);
-    const transfer: ArrayBuffer[] = [];
-    for (const p of parts) {
-      transfer.push(p.positions.buffer as ArrayBuffer);
-      if (p.normals) transfer.push(p.normals.buffer as ArrayBuffer);
-      if (p.index) transfer.push(p.index.buffer as ArrayBuffer);
+    const total = parts.length;
+    // Stream chunks back as separate messages; each is its own event-loop task
+    // on the main thread, so the scene can mount + repaint between chunks.
+    for (let i = 0; i < total; i += STREAM_CHUNK) {
+      const chunk = parts.slice(i, i + STREAM_CHUNK);
+      const loaded = Math.min(i + STREAM_CHUNK, total);
+      const transfer: ArrayBuffer[] = [];
+      for (const p of chunk) {
+        transfer.push(p.positions.buffer as ArrayBuffer);
+        if (p.normals) transfer.push(p.normals.buffer as ArrayBuffer);
+        if (p.index) transfer.push(p.index.buffer as ArrayBuffer);
+      }
+      const res: WorkerResponse = {
+        reqId: req.reqId,
+        ok: true,
+        format,
+        parts: chunk,
+        loaded,
+        total,
+        done: loaded >= total,
+      };
+      (self as unknown as Worker).postMessage(res, transfer);
     }
-    const res: WorkerResponse = { reqId: req.reqId, ok: true, format, parts };
-    (self as unknown as Worker).postMessage(res, transfer);
   } catch (err) {
     const res: WorkerResponse = {
       reqId: req.reqId,

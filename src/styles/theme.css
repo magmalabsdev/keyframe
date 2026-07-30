@@ -100,6 +100,20 @@ select:focus {
   border-color: var(--accent);
 }
 
+/* `color-scheme: dark` on :root isn't enough in every engine: Safari in
+ * particular renders a <select>'s native dropdown popup (and its <option>s)
+ * using the OS-level scheme unless the property is also set directly on the
+ * form control, which left the popup black-on-white regardless of our theme.
+ * Declaring it here (plus explicit option colors as a belt-and-suspenders
+ * fallback) forces the popup itself into the dark palette. */
+select {
+  color-scheme: dark;
+}
+option {
+  color: var(--text);
+  background: var(--panel);
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

@@ -2,12 +2,16 @@ import { useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useDocumentStore, useActiveScene } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
+import { createLightObject, createSurfaceObject, createTextObject } from '../state/defaults';
+import { buildGlyphObjects } from '../scene/textLayout';
+import { loadThreeFont } from '../io/fonts';
 import { importModelFiles } from '../io/importModel';
 import { SUPPORTED_EXTENSIONS } from '../io/loaders';
 import { childrenOf, flattenTree } from '../scene/tree';
 import { groupSelection, ungroupSelection } from '../scene/grouping';
 import { openSelectionMenu } from './ContextMenu';
-import type { SceneObject } from '../state/types';
+import { ObjectTypeIcon } from './ObjectTypeIcon';
+import type { Asset, SceneObject } from '../state/types';
 import styles from './LeftBar.module.css';
 
 const ACCEPT = SUPPORTED_EXTENSIONS.map((e) => `.${e}`).join(',');
@@ -15,12 +19,14 @@ const ACCEPT = SUPPORTED_EXTENSIONS.map((e) => `.${e}`).join(',');
 function ObjectRow({
   obj,
   objects,
+  assets,
   depth,
   onSelectRow,
   onContextMenuRow,
 }: {
   obj: SceneObject;
   objects: SceneObject[];
+  assets: Record<string, Asset>;
   depth: number;
   onSelectRow: (id: string, e: ReactPointerEvent) => void;
   onContextMenuRow: (id: string, e: ReactMouseEvent) => void;
@@ -31,7 +37,8 @@ function ObjectRow({
   const [open, setOpen] = useState(true);
 
   const isSelected = selectedIds.includes(obj.id);
-  const kids = obj.type === 'group' ? childrenOf(objects, obj.id) : [];
+  // Any object can hold children: a surface parents to the mesh it sits on.
+  const kids = childrenOf(objects, obj.id);
 
   return (
     <>
@@ -41,7 +48,7 @@ function ObjectRow({
         onPointerDown={(e) => onSelectRow(obj.id, e)}
         onContextMenu={(e) => onContextMenuRow(obj.id, e)}
       >
-        {obj.type === 'group' ? (
+        {kids.length > 0 ? (
           <button
             className={styles.disclosure}
             onPointerDown={(e) => {
@@ -65,8 +72,14 @@ function ObjectRow({
           {obj.visible ? '◉' : '○'}
         </button>
         <span className={styles.objectName}>
-          {obj.type === 'group' ? '▦ ' : ''}
-          {obj.name}
+          <span className={styles.typeIcon}>
+            <ObjectTypeIcon
+              object={obj}
+              assets={assets}
+              parent={obj.parentId ? objects.find((o) => o.id === obj.parentId) : undefined}
+            />
+          </span>
+          <span>{obj.name}</span>
         </span>
         <button
           className={styles.delete}
@@ -79,13 +92,13 @@ function ObjectRow({
           ×
         </button>
       </div>
-      {obj.type === 'group' &&
-        open &&
+      {open &&
         kids.map((c) => (
           <ObjectRow
             key={c.id}
             obj={c}
             objects={objects}
+            assets={assets}
             depth={depth + 1}
             onSelectRow={onSelectRow}
             onContextMenuRow={onContextMenuRow}
@@ -103,6 +116,8 @@ export function LeftBar() {
   const removeScene = useDocumentStore((s) => s.removeScene);
   const renameScene = useDocumentStore((s) => s.renameScene);
   const duplicateScene = useDocumentStore((s) => s.duplicateScene);
+  const addObjects = useDocumentStore((s) => s.addObjects);
+  const assets = useDocumentStore((s) => s.project.assets);
   const selectedIds = useEditorStore((s) => s.selectedIds);
   const setSelection = useEditorStore((s) => s.setSelection);
   const toggleSelection = useEditorStore((s) => s.toggleSelection);
@@ -178,7 +193,7 @@ export function LeftBar() {
                 if (name) renameScene(scene.id, name);
               }}
             >
-              <span className={styles.objectName}>{scene.name}</span>
+              <span className={styles.sceneName}>{scene.name}</span>
               {scenes.length > 1 && (
                 <button
                   className={styles.delete}
@@ -210,6 +225,43 @@ export function LeftBar() {
                 Group
               </button>
             )}
+            <button
+              className={styles.importBtn}
+              onClick={() => {
+                const light = createLightObject(activeScene.durationMs);
+                addObjects([light]);
+                setSelection([light.id]);
+              }}
+              title="Add a light source"
+            >
+              + Light
+            </button>
+            <button
+              className={styles.importBtn}
+              onClick={() => {
+                const surface = createSurfaceObject(activeScene.durationMs);
+                addObjects([surface]);
+                setSelection([surface.id]);
+              }}
+              title="Add a flat image / video / text surface"
+            >
+              + Surface
+            </button>
+            <button
+              className={styles.importBtn}
+              onClick={() => {
+                const textObj = createTextObject(activeScene.durationMs);
+                // Glyph children need the parsed font for layout; the bundled
+                // font resolves quickly (and is cached after the first use).
+                void loadThreeFont(undefined).then((font) => {
+                  addObjects([textObj, ...buildGlyphObjects(textObj, font)]);
+                  setSelection([textObj.id]);
+                });
+              }}
+              title="Add extruded 3D text"
+            >
+              + Text
+            </button>
             <button
               className={styles.importBtn}
               onClick={() => fileInput.current?.click()}
@@ -260,6 +312,7 @@ export function LeftBar() {
                 key={obj.id}
                 obj={obj}
                 objects={objects}
+                assets={assets}
                 depth={0}
                 onSelectRow={onSelectRow}
                 onContextMenuRow={onContextMenuRow}

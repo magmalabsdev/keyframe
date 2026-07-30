@@ -56,7 +56,10 @@ export function MultiObjectInspector({ ids }: { ids: string[] }) {
   const metalness = objects.map((o) => o.material.metalness);
   const roughness = objects.map((o) => o.material.roughness);
   const allVisible = objects.every((o) => o.visible);
-  const meshes = objects.filter((o) => o.type === 'mesh');
+  // Surfaces and glyphs carry the same color/opacity material fields as meshes.
+  const meshes = objects.filter(
+    (o) => o.type === 'mesh' || o.type === 'surface' || o.type === 'glyph',
+  );
 
   return (
     <div className={styles.inspector}>

@@ -9,6 +9,7 @@ import type { GeometryData, Project } from '../state/types';
 import { migrateProject } from '../state/migrate';
 import { buildGeometry, getGeometryData, hasGeometry, putGeometry, putGeometryData } from './geometryCache';
 import { putMedia } from './mediaCache';
+import { decodeAudio } from './audioCache';
 import {
   parseProjectContainer,
   serializeProject,
@@ -76,7 +77,12 @@ async function hydrateGeometries(project: Project): Promise<void> {
 async function hydrateMedia(project: Project): Promise<void> {
   for (const media of Object.values(project.media ?? {})) {
     const blob = await get<Blob>(MEDIA_KEY_PREFIX + media.id);
-    if (blob) putMedia(media.id, blob);
+    if (!blob) continue;
+    putMedia(media.id, blob);
+    // Audio also needs decoding into the audio cache so it can play/export.
+    if (media.kind === 'audio') {
+      void decodeAudio(media.id, blob).catch(() => {});
+    }
   }
 }
 

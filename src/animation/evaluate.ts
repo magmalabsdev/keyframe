@@ -1,9 +1,9 @@
 import type {
-  CameraKeyframe,
   CameraState,
   ChannelKey,
   Easing,
   SceneObject,
+  Tracks,
   Transform,
   ValueKeyframe,
   Vec3,
@@ -28,10 +28,6 @@ export function ease(t: number, mode: Easing): number {
 
 function lerp(a: number, b: number, f: number): number {
   return a + (b - a) * f;
-}
-
-function lerpVec3(a: Vec3, b: Vec3, f: number): Vec3 {
-  return [lerp(a[0], b[0], f), lerp(a[1], b[1], f), lerp(a[2], b[2], f)];
 }
 
 /** Linearly interpolates between two "#rrggbb" hex colors. */
@@ -62,10 +58,23 @@ function segmentIndex(times: number[], time: number): number {
   return lo;
 }
 
+/** Evaluated light-emission values at a point in time (see LightParams). */
+export interface LightValues {
+  color: string;
+  intensity: number;
+  spreadDeg: number;
+  softness: number;
+  direction: Vec3;
+}
+
 /** A transform plus the object's color and opacity at a point in time. */
 export interface PoseValue extends Transform {
   color: string;
   opacity: number;
+  /** Present only for objects with light params (light objects / emitters). */
+  light?: LightValues;
+  /** Typewriter reveal 0..1. Present only for text objects / text surfaces. */
+  writeOn?: number;
 }
 
 /** Evaluates a single numeric channel track at a time, clamping at the ends. */
@@ -110,14 +119,19 @@ export function evaluateColorTrack(
   return lerpColor(a.value as string, b.value as string, f);
 }
 
-const AXIS_CHANNELS: Record<'position' | 'rotation' | 'scale', ChannelKey[]> = {
+const AXIS_CHANNELS: Record<
+  'position' | 'rotation' | 'scale' | 'target' | 'light.direction',
+  ChannelKey[]
+> = {
   position: ['position.0', 'position.1', 'position.2'],
   rotation: ['rotation.0', 'rotation.1', 'rotation.2'],
   scale: ['scale.0', 'scale.1', 'scale.2'],
+  target: ['target.0', 'target.1', 'target.2'],
+  'light.direction': ['light.direction.0', 'light.direction.1', 'light.direction.2'],
 };
 
 function evalAxes(
-  tracks: SceneObject['tracks'],
+  tracks: Tracks,
   channels: ChannelKey[],
   timeMs: number,
   base: Vec3,
@@ -132,13 +146,25 @@ function evalAxes(
 /** The transform + color + opacity an object should display at a given scene time. */
 export function evaluateObject(object: SceneObject, timeMs: number): PoseValue {
   const tracks = object.tracks ?? {};
-  const { transform, material } = object;
+  const { transform, material, light } = object;
+  const hasWriteOn = object.type === 'text' || object.surface?.content === 'text';
+  const writeOnBase = object.text?.writeOn ?? object.surface?.writeOn ?? 1;
   return {
     position: evalAxes(tracks, AXIS_CHANNELS.position, timeMs, transform.position),
     rotation: evalAxes(tracks, AXIS_CHANNELS.rotation, timeMs, transform.rotation),
     scale: evalAxes(tracks, AXIS_CHANNELS.scale, timeMs, transform.scale),
     color: evaluateColorTrack(tracks.color, timeMs, material.color),
     opacity: evaluateTrack(tracks.opacity, timeMs, material.opacity),
+    writeOn: hasWriteOn
+      ? Math.max(0, Math.min(1, evaluateTrack(tracks['text.writeOn'], timeMs, writeOnBase)))
+      : undefined,
+    light: light && {
+      color: evaluateColorTrack(tracks['light.color'], timeMs, light.color),
+      intensity: evaluateTrack(tracks['light.intensity'], timeMs, light.intensity),
+      spreadDeg: evaluateTrack(tracks['light.spread'], timeMs, light.spreadDeg),
+      softness: evaluateTrack(tracks['light.softness'], timeMs, light.softness),
+      direction: evalAxes(tracks, AXIS_CHANNELS['light.direction'], timeMs, light.direction),
+    },
   };
 }
 
@@ -147,27 +173,14 @@ export function isObjectActive(object: SceneObject, timeMs: number): boolean {
   return timeMs >= object.lifetime.startMs && timeMs <= object.lifetime.endMs;
 }
 
-/** Camera state at a given time, interpolating its keyframes if any. */
+/** Camera state at a given time, per-axis interpolating its `tracks` if any. */
 export function evaluateCamera(
   cameraDefault: CameraState,
-  keyframes: CameraKeyframe[],
+  tracks: Tracks,
   timeMs: number,
 ): CameraState {
-  if (keyframes.length === 0) return cameraDefault;
-  const first = keyframes[0];
-  const last = keyframes[keyframes.length - 1];
-  if (timeMs <= first.timeMs) return { position: first.position, target: first.target };
-  if (timeMs >= last.timeMs) return { position: last.position, target: last.target };
-
-  const times = keyframes.map((k) => k.timeMs);
-  const i = segmentIndex(times, timeMs);
-  const a = keyframes[i];
-  const b = keyframes[i + 1];
-  const span = b.timeMs - a.timeMs;
-  const raw = span <= 0 ? 0 : (timeMs - a.timeMs) / span;
-  const f = ease(raw, a.interpolation);
   return {
-    position: lerpVec3(a.position, b.position, f),
-    target: lerpVec3(a.target, b.target, f),
+    position: evalAxes(tracks, AXIS_CHANNELS.position, timeMs, cameraDefault.position),
+    target: evalAxes(tracks, AXIS_CHANNELS.target, timeMs, cameraDefault.target),
   };
 }

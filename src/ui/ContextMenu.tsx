@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { create } from 'zustand';
 import { getActiveScene, redo, undo, useDocumentStore } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
 import { groupSelection, ungroupSelection } from '../scene/grouping';
@@ -12,33 +11,11 @@ import {
   pasteClipboard,
   selectAll,
 } from '../app/clipboard';
+import { chordFor } from '../app/keymap';
+import { useContextMenu, type MenuItem } from './contextMenuStore';
 import styles from './ContextMenu.module.css';
 
-export interface MenuItem {
-  label: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  separator?: boolean;
-  shortcut?: string;
-}
-
-interface MenuState {
-  open: boolean;
-  x: number;
-  y: number;
-  items: MenuItem[];
-  openMenu: (x: number, y: number, items: MenuItem[]) => void;
-  closeMenu: () => void;
-}
-
-export const useContextMenu = create<MenuState>((set) => ({
-  open: false,
-  x: 0,
-  y: 0,
-  items: [],
-  openMenu: (x, y, items) => set({ open: true, x, y, items }),
-  closeMenu: () => set({ open: false, items: [] }),
-}));
+export { useContextMenu, type MenuItem } from './contextMenuStore';
 
 /** Standard edit menu wired to the existing clipboard / grouping / history ops. */
 export function buildSelectionMenu(): MenuItem[] {
@@ -49,40 +26,40 @@ export function buildSelectionMenu(): MenuItem[] {
   const temporal = useDocumentStore.temporal.getState();
 
   return [
-    { label: 'Cut', shortcut: '⌘X', disabled: !hasSel, onClick: cutSelection },
-    { label: 'Copy', shortcut: '⌘C', disabled: !hasSel, onClick: copySelection },
-    { label: 'Paste', shortcut: '⌘V', disabled: !hasClipboard(), onClick: pasteClipboard },
+    { label: 'Cut', shortcut: chordFor('edit.cut'), disabled: !hasSel, onClick: cutSelection },
+    { label: 'Copy', shortcut: chordFor('edit.copy'), disabled: !hasSel, onClick: copySelection },
+    { label: 'Paste', shortcut: chordFor('edit.paste'), disabled: !hasClipboard(), onClick: pasteClipboard },
     {
       label: 'Duplicate',
-      shortcut: '⌘D',
+      shortcut: chordFor('edit.duplicate'),
       disabled: !hasSel,
       onClick: duplicateSelection,
     },
-    { label: 'Delete', shortcut: '⌫', disabled: !hasSel, onClick: deleteSelection },
+    { label: 'Delete', shortcut: chordFor('edit.delete2'), disabled: !hasSel, onClick: deleteSelection },
     { label: '', separator: true },
     {
       label: 'Group',
-      shortcut: '⌘G',
+      shortcut: chordFor('edit.group'),
       disabled: selObjs.length < 2,
       onClick: groupSelection,
     },
     {
       label: 'Ungroup',
-      shortcut: '⌘⇧G',
+      shortcut: chordFor('edit.ungroup'),
       disabled: !selObjs.some((o) => o.type === 'group'),
       onClick: ungroupSelection,
     },
-    { label: 'Select all', shortcut: '⌘A', onClick: selectAll },
+    { label: 'Select all', shortcut: chordFor('edit.selectAll'), onClick: selectAll },
     { label: '', separator: true },
     {
       label: 'Undo',
-      shortcut: '⌘Z',
+      shortcut: chordFor('edit.undo'),
       disabled: temporal.pastStates.length === 0,
       onClick: undo,
     },
     {
       label: 'Redo',
-      shortcut: '⌘⇧Z',
+      shortcut: chordFor('edit.redo'),
       disabled: temporal.futureStates.length === 0,
       onClick: redo,
     },

@@ -98,4 +98,186 @@ describe('poseObjectAtTime', () => {
     const o = obj({ startAnim: { type: 'fade', durationMs: 1000 } });
     expect(poseObjectAtTime(o, 500).fragment).toBeNull();
   });
+
+  it('passes light values through unchanged; consumers dim via opacityMul', () => {
+    const o = obj({
+      light: {
+        enabled: true,
+        color: '#ffaa00',
+        intensity: 4,
+        spreadDeg: 90,
+        softness: 0.5,
+        direction: [0, 0, -1],
+      },
+      startAnim: { type: 'fade', durationMs: 1000 },
+    });
+    const mid = poseObjectAtTime(o, 500);
+    // The dimming contract: pose.light.intensity stays at the evaluated value
+    // and applyObjectPose multiplies by opacityMul (0.5 mid-fade).
+    expect(mid.light!.intensity).toBe(4);
+    expect(mid.light!.color).toBe('#ffaa00');
+    expect(mid.opacityMul).toBeCloseTo(0.5, 3);
+  });
+
+  it('has no light values for objects without light params', () => {
+    expect(poseObjectAtTime(obj(), 1000).light).toBeUndefined();
+  });
+});
+
+describe('glyph write-on masking', () => {
+  function textParent(writeOn: number | undefined, tracks: SceneObject['tracks'] = {}): SceneObject {
+    return obj({
+      id: 'parent',
+      type: 'text',
+      assetId: null,
+      tracks,
+      text: {
+        text: 'AB C', // 4 characters incl. the space
+        fontSize: 40,
+        depth: 10,
+        align: 'center',
+        letterSpacing: 0,
+        lineHeight: 1.15,
+        writeOn,
+      },
+    });
+  }
+  function glyph(index: number): SceneObject {
+    return obj({
+      id: `g${index}`,
+      type: 'glyph',
+      assetId: null,
+      parentId: 'parent',
+      glyph: { char: 'A', index, layoutPos: [0, 0, 0] },
+    });
+  }
+  const ctxFor = (parent: SceneObject) => ({
+    bindings: {},
+    vars: {},
+    objectById: new Map([[parent.id, parent]]),
+  });
+
+  it('hides glyphs beyond the revealed count', () => {
+    const parent = textParent(0.5); // 4 chars -> 2 revealed
+    const ctx = ctxFor(parent);
+    expect(poseObjectAtTime(glyph(0), 1000, ctx).visible).toBe(true);
+    expect(poseObjectAtTime(glyph(1), 1000, ctx).visible).toBe(true);
+    expect(poseObjectAtTime(glyph(3), 1000, ctx).visible).toBe(false);
+  });
+
+  it('shows every glyph at full reveal and none at zero', () => {
+    const full = ctxFor(textParent(1));
+    expect(poseObjectAtTime(glyph(3), 1000, full).visible).toBe(true);
+    const none = ctxFor(textParent(0));
+    expect(poseObjectAtTime(glyph(0), 1000, none).visible).toBe(false);
+  });
+
+  it('follows the parent write-on track over time', () => {
+    const parent = textParent(1, {
+      'text.writeOn': [
+        { id: 'w0', timeMs: 0, value: 0, interpolation: 'linear' },
+        { id: 'w1', timeMs: 1000, value: 1, interpolation: 'linear' },
+      ],
+    });
+    const ctx = ctxFor(parent);
+    expect(poseObjectAtTime(glyph(3), 100, ctx).visible).toBe(false);
+    expect(poseObjectAtTime(glyph(3), 1000, ctx).visible).toBe(true);
+  });
+
+  it('does not mask glyphs without context (three hierarchy still hides via parent)', () => {
+    expect(poseObjectAtTime(glyph(3), 1000).visible).toBe(true);
+  });
+
+  it('inherits the parent transition opacity (fade dims each character)', () => {
+    const parent = textParent(1);
+    parent.startAnim = { type: 'fade', durationMs: 1000 };
+    const ctx = ctxFor(parent);
+    expect(poseObjectAtTime(glyph(0), 500, ctx).opacityMul).toBeCloseTo(0.5, 5);
+  });
+
+  it('passes writeOn through the pose for text parents', () => {
+    expect(poseObjectAtTime(textParent(0.5), 1000).writeOn).toBe(0.5);
+  });
+});
+
+describe('glyph form transition cascade', () => {
+  const voxel = { type: 'voxel form' as const, durationMs: 1000 };
+  const particle = { type: 'particle form' as const, durationMs: 1000 };
+
+  function parentText(partial: Partial<SceneObject> = {}): SceneObject {
+    return obj({
+      id: 'parent',
+      type: 'text',
+      assetId: null,
+      text: {
+        text: 'AB',
+        fontSize: 40,
+        depth: 10,
+        align: 'center',
+        letterSpacing: 0,
+        lineHeight: 1.15,
+        writeOn: 1,
+      },
+      ...partial,
+    });
+  }
+  function glyphOf(parent: SceneObject, partial: Partial<SceneObject> = {}): SceneObject {
+    return obj({
+      id: 'g',
+      type: 'glyph',
+      assetId: null,
+      parentId: parent.id,
+      glyph: { char: 'A', index: 0, layoutPos: [0, 0, 0] },
+      ...partial,
+    });
+  }
+  const ctxFor = (parent: SceneObject) => ({
+    bindings: {},
+    vars: {},
+    objectById: new Map([[parent.id, parent]]),
+  });
+
+  it('inherits the parent text’s form transition', () => {
+    const parent = parentText({ startAnim: voxel });
+    const p = poseObjectAtTime(glyphOf(parent), 500, ctxFor(parent));
+    expect(p.fragment).toEqual({ which: 'start', progress: 0.5 });
+  });
+
+  it('keeps the glyph’s own form transition instead of the parent’s', () => {
+    const parent = parentText({ startAnim: voxel, endAnim: voxel });
+    const g = glyphOf(parent, { startAnim: particle });
+    // Its own transition drives it; the parent's is not layered on.
+    expect(poseObjectAtTime(g, 500, ctxFor(parent)).fragment).toEqual({
+      which: 'start',
+      progress: 0.5,
+    });
+  });
+
+  it('lets a non-form transition on the glyph block inheritance', () => {
+    const parent = parentText({ startAnim: voxel });
+    const g = glyphOf(parent, { startAnim: { type: 'fade', durationMs: 1000 } });
+    expect(poseObjectAtTime(g, 500, ctxFor(parent)).fragment).toBeNull();
+  });
+
+  it('does not inherit without an object map (export/live parity guard)', () => {
+    const parent = parentText({ startAnim: voxel });
+    expect(poseObjectAtTime(glyphOf(parent), 500).fragment).toBeNull();
+  });
+
+  it('still inherits while hidden by the write-on reveal', () => {
+    // Otherwise a glyph would pop in un-fragmented the instant it's revealed.
+    const parent = parentText({ startAnim: voxel, text: {
+      text: 'AB', fontSize: 40, depth: 10, align: 'center',
+      letterSpacing: 0, lineHeight: 1.15, writeOn: 0,
+    } });
+    const p = poseObjectAtTime(glyphOf(parent), 500, ctxFor(parent));
+    expect(p.visible).toBe(false);
+    expect(p.fragment).toEqual({ which: 'start', progress: 0.5 });
+  });
+
+  it('cascades the end transition too', () => {
+    const parent = parentText({ endAnim: voxel });
+    const p = poseObjectAtTime(glyphOf(parent), 3500, ctxFor(parent));
+    expect(p.fragment).toEqual({ which: 'end', progress: 0.5 });
+  });
 });

@@ -5,12 +5,20 @@
  */
 const blobs = new Map<string, Blob>();
 const urls = new Map<string, string>();
+const listeners = new Set<() => void>();
+
+/** Subscribe to blob arrivals (e.g. fonts hydrating after load). Returns unsubscribe. */
+export function subscribeMedia(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => listeners.delete(cb);
+}
 
 export function putMedia(id: string, blob: Blob): void {
   blobs.set(id, blob);
   const old = urls.get(id);
   if (old) URL.revokeObjectURL(old);
   urls.set(id, URL.createObjectURL(blob));
+  for (const cb of listeners) cb();
 }
 
 export function getMediaBlob(id: string): Blob | undefined {

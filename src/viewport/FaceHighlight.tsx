@@ -11,15 +11,16 @@ const _v = new THREE.Vector3();
 const HIGHLIGHT_OFFSET = 0.5; // mm, along the face normal, to avoid z-fighting
 
 /**
- * While the "place on face" tool is active, highlights the planar face under
- * the cursor so the user can see which face will be placed face-down.
+ * Highlights the planar face under the cursor for the two face-targeting
+ * tools, so the user can see what they are about to act on: which face will be
+ * placed face-down ('place'), or which face will receive a surface ('surface').
  */
 export function FaceHighlight() {
   const tool = useEditorStore((s) => s.activeTool);
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
 
   useEffect(() => {
-    if (tool !== 'place') {
+    if (tool !== 'place' && tool !== 'surface') {
       setGeometry(null);
       return;
     }
@@ -38,7 +39,14 @@ export function FaceHighlight() {
       _ray.setFromCamera(_ndc, root.camera);
       const hit = _ray
         .intersectObjects(root.scene.children, true)
-        .find((h) => h.object.name?.endsWith('__mesh') && h.face != null && h.faceIndex != null);
+        .find(
+          (h) =>
+            h.object.name?.endsWith('__mesh') &&
+            !h.object.userData.lightProxy && // light proxies have no real faces
+            !h.object.userData.surfaceMesh && // don't stack a decal on a decal
+            h.face != null &&
+            h.faceIndex != null,
+        );
 
       if (!hit || !hit.face || hit.faceIndex == null) {
         setGeometry((prev) => {
@@ -111,7 +119,7 @@ export function FaceHighlight() {
   return (
     <mesh geometry={geometry} renderOrder={999}>
       <meshBasicMaterial
-        color="#2ecc71"
+        color={tool === 'surface' ? '#4c8bf5' : '#2ecc71'}
         transparent
         opacity={0.4}
         depthTest={false}

@@ -20,6 +20,15 @@
   background: var(--panel-2);
 }
 
+.typeIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  font-size: 16px;
+  color: var(--text-dim);
+}
+
 .section {
   border-bottom: 1px solid var(--border);
 }
@@ -172,7 +181,12 @@
   border: none;
   background: transparent;
   padding: 2px;
-  width: 100%;
+  /* flex-basis 0 + grow, not width:100% — as a %-basis in a row flex
+     container, 100% competes with siblings (axis label, suffix, keyframe
+     diamond) for the same space and shrinks toward zero instead of filling
+     what's left. */
+  flex: 1 1 0;
+  width: auto;
   min-width: 0;
   font: var(--mono);
 }
@@ -411,9 +425,89 @@
   letter-spacing: 0;
 }
 
+.modeToggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 5px;
+}
+.modeToggle button {
+  flex: 1;
+}
+
+.miniLabel {
+  color: var(--text-faint);
+  font-size: 10px;
+  margin-bottom: 2px;
+}
+
 .fullSelect {
   width: 100%;
   text-transform: capitalize;
+}
+
+.fontPicker {
+  position: relative;
+  width: 100%;
+}
+
+.fontMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.fontSearch {
+  width: auto;
+  margin: 6px;
+  padding: 5px 8px;
+}
+
+.fontList {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0 4px 4px;
+}
+
+.fontItem {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  text-transform: none;
+  cursor: pointer;
+}
+.fontItemActive {
+  background: var(--accent);
+  color: #fff;
+}
+.fontItemAction {
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  border-radius: 0;
+}
+.fontItemAction.fontItemActive {
+  color: #fff;
+}
+
+.fontEmpty {
+  padding: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
 }
 
 .fullBtn {

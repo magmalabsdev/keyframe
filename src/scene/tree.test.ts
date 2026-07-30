@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { childrenOf, descendantIds, topLevelAncestor } from './tree';
+import { childrenOf, descendantIds, flattenTree, topLevelAncestor } from './tree';
 import type { SceneObject } from '../state/types';
 
 function obj(id: string, parentId: string | null): SceneObject {
@@ -45,5 +45,19 @@ describe('tree helpers', () => {
     expect(descendantIds(objects, 'g').sort()).toEqual(['a', 'b', 'c']);
     expect(descendantIds(objects, 'b')).toEqual(['c']);
     expect(descendantIds(objects, 'top')).toEqual([]);
+  });
+
+  it('flattenTree walks depth-first through non-group parents', () => {
+    // Every kind can hold children now: a surface parents to the mesh it sits
+    // on, and these are all meshes.
+    expect(flattenTree(objects).map((o) => o.id)).toEqual(['g', 'a', 'b', 'c', 'top']);
+  });
+
+  it('flattenTree recurses into a surface parented to a mesh', () => {
+    const withSurface = [
+      obj('host', null),
+      { ...obj('label', 'host'), type: 'surface' as const },
+    ];
+    expect(flattenTree(withSurface).map((o) => o.id)).toEqual(['host', 'label']);
   });
 });

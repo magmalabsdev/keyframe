@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { GeometryData, ModelFormat } from '../state/types';
 import { geometryToData } from './geometryCache';
+import { ensureNormals } from './normals';
 import type { WorkerPart, WorkerRequest, WorkerResponse } from './modelWorker';
 
 /** A single parsed mesh part: metadata + raw typed-array geometry. */
@@ -15,8 +16,17 @@ export interface LoadedPart {
 
 export interface LoadedModel {
   format: ModelFormat;
-  parts: LoadedPart[];
 }
+
+/**
+ * Called for each streamed batch of parts as a model loads. `loaded`/`total`
+ * count parts across the whole file so callers can show import progress.
+ */
+export type PartsHandler = (
+  parts: LoadedPart[],
+  loaded: number,
+  total: number,
+) => void;
 
 export const SUPPORTED_EXTENSIONS = ['stl', 'obj', 'gltf', 'glb', 'step', 'stp'];
 
@@ -36,15 +46,23 @@ function runWorker(
   name: string,
   buffer: ArrayBuffer,
   quality: number,
-): Promise<{ format: string; parts: WorkerPart[] }> {
+  onParts: PartsHandler,
+): Promise<{ format: string }> {
   return new Promise((resolve, reject) => {
     const reqId = ++reqCounter;
     const w = getWorker();
     const onMsg = (e: MessageEvent<WorkerResponse>) => {
       if (e.data.reqId !== reqId) return;
-      w.removeEventListener('message', onMsg);
-      if (e.data.ok) resolve({ format: e.data.format, parts: e.data.parts });
-      else reject(new Error(e.data.error));
+      if (!e.data.ok) {
+        w.removeEventListener('message', onMsg);
+        reject(new Error(e.data.error));
+        return;
+      }
+      onParts(e.data.parts.map(workerPartToLoaded), e.data.loaded, e.data.total);
+      if (e.data.done) {
+        w.removeEventListener('message', onMsg);
+        resolve({ format: e.data.format });
+      }
     };
     w.addEventListener('message', onMsg);
     const req: WorkerRequest = { reqId, kind, name, buffer, quality };
@@ -70,7 +88,8 @@ function mergeObject3D(root: THREE.Object3D): THREE.BufferGeometry {
       if (key !== 'position' && key !== 'normal') g.deleteAttribute(key);
     }
     if (g.index) g = g.toNonIndexed();
-    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    // Repair per geometry before merging so every input has the same attributes.
+    ensureNormals(g);
     geometries.push(g);
   });
   if (geometries.length === 0) throw new Error('No mesh geometry found in file');
@@ -94,7 +113,16 @@ function centerGeometry(g: THREE.BufferGeometry): void {
   g.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, -bb.min.z);
 }
 
-export async function loadModelFile(file: File, quality = 0.5): Promise<LoadedModel> {
+/**
+ * Loads a model file, delivering parts to `onParts` in batches as they become
+ * available (a large STEP assembly streams many batches; single-mesh formats
+ * deliver one). Resolves with the file format once every part has been handed off.
+ */
+export async function loadModelFile(
+  file: File,
+  quality = 0.5,
+  onParts: PartsHandler,
+): Promise<LoadedModel> {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase();
   const name = file.name.replace(/\.[^.]+$/, '') || 'Imported';
 
@@ -104,17 +132,15 @@ export async function loadModelFile(file: File, quality = 0.5): Promise<LoadedMo
     case 'step':
     case 'stp': {
       const buffer = await file.arrayBuffer();
-      const { format, parts } = await runWorker(ext, name, buffer, quality);
-      return { format: format as ModelFormat, parts: parts.map(workerPartToLoaded) };
+      const { format } = await runWorker(ext, name, buffer, quality, onParts);
+      return { format: format as ModelFormat };
     }
     case 'gltf':
     case 'glb': {
       const geometry = await loadGltf(file, ext);
       centerGeometry(geometry);
-      return {
-        format: ext === 'glb' ? 'glb' : 'gltf',
-        parts: [{ name, data: geometryToData(geometry) }],
-      };
+      onParts([{ name, data: geometryToData(geometry) }], 1, 1);
+      return { format: ext === 'glb' ? 'glb' : 'gltf' };
     }
     default:
       throw new Error(`Unsupported file type: .${ext}`);

@@ -14,12 +14,20 @@ export interface MarqueeRect {
 const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
 const _box = new THREE.Box3();
-const _center = new THREE.Vector3();
+const _corner = new THREE.Vector3();
 
-/** True if `object` or any ancestor is part of a three-stdlib TransformControls gizmo. */
-function isOnTransformControls(object: THREE.Object3D | null): boolean {
+/**
+ * True if `object` or an ancestor is an interactive TransformControls handle.
+ * Deliberately excludes the gizmo's giant invisible drag plane: that plane is
+ * raycast-hit (three doesn't skip invisible meshes) and, being screen-sized,
+ * would otherwise occlude all empty space and block marquee/deselect whenever a
+ * gizmo is shown. Pressing empty plane area does nothing in TransformControls
+ * anyway (no handle under the pointer → no drag), so it's safe to marquee there.
+ */
+function isOnGizmoHandle(object: THREE.Object3D | null): boolean {
   for (let o: THREE.Object3D | null = object; o; o = o.parent) {
-    if ((o as any).isTransformControlsGizmo || (o as any).isTransformControlsPlane) return true;
+    if ((o as any).isTransformControlsPlane) return false;
+    if ((o as any).isTransformControlsGizmo) return true;
   }
   return false;
 }
@@ -47,11 +55,31 @@ function selectInRect(
     if (!node) continue;
     _box.setFromObject(node);
     if (_box.isEmpty()) continue;
-    _box.getCenter(_center);
-    _center.project(root.camera);
-    const px = rect.left + (_center.x * 0.5 + 0.5) * rect.width;
-    const py = rect.top + (-_center.y * 0.5 + 0.5) * rect.height;
-    if (px >= minX && px <= maxX && py >= minY && py <= maxY) hits.push(o.id);
+    // Project the object's world AABB corners to screen space and take their
+    // bounding rect; a crossing (touch) test against the marquee is far more
+    // forgiving than requiring the box's center to land inside it.
+    let bMinX = Infinity;
+    let bMinY = Infinity;
+    let bMaxX = -Infinity;
+    let bMaxY = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      _corner
+        .set(
+          i & 1 ? _box.max.x : _box.min.x,
+          i & 2 ? _box.max.y : _box.min.y,
+          i & 4 ? _box.max.z : _box.min.z,
+        )
+        .project(root.camera);
+      const px = rect.left + (_corner.x * 0.5 + 0.5) * rect.width;
+      const py = rect.top + (-_corner.y * 0.5 + 0.5) * rect.height;
+      bMinX = Math.min(bMinX, px);
+      bMaxX = Math.max(bMaxX, px);
+      bMinY = Math.min(bMinY, py);
+      bMaxY = Math.max(bMaxY, py);
+    }
+    if (bMinX <= maxX && bMaxX >= minX && bMinY <= maxY && bMaxY >= minY) {
+      hits.push(o.id);
+    }
   }
 
   const editor = useEditorStore.getState();
@@ -83,7 +111,7 @@ export function useMarquee() {
       _ray.setFromCamera(_ndc, root.camera);
       const onObject = _ray
         .intersectObjects(root.scene.children, true)
-        .some((h) => h.object.name?.endsWith('__mesh') || isOnTransformControls(h.object));
+        .some((h) => h.object.name?.endsWith('__mesh') || isOnGizmoHandle(h.object));
       if (onObject) return; // object/freedrag/gizmo handles it
 
       const startX = e.clientX;

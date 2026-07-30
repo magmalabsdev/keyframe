@@ -7,7 +7,7 @@ import {
   evaluateCamera,
   isObjectActive,
 } from './evaluate';
-import type { CameraKeyframe, Easing, SceneObject, ValueKeyframe } from '../state/types';
+import type { Easing, SceneObject, Tracks, ValueKeyframe } from '../state/types';
 
 function vk(timeMs: number, value: number | string, interpolation: Easing = 'linear'): ValueKeyframe {
   return { id: `k${timeMs}`, timeMs, value, interpolation };
@@ -93,24 +93,95 @@ describe('evaluateObject (per-channel tracks)', () => {
     expect(evaluateObject(obj, 500).position[1]).toBe(2);
     expect(evaluateObject(obj, 500).position[2]).toBe(3);
   });
+
+  it('omits light values for objects without light params', () => {
+    expect(evaluateObject(base, 1000).light).toBeUndefined();
+  });
+});
+
+describe('evaluateObject (light channels)', () => {
+  const lit: SceneObject = {
+    id: 'l',
+    name: 'l',
+    type: 'light',
+    parentId: null,
+    assetId: null,
+    visible: true,
+    lifetime: { startMs: 0, endMs: 4000 },
+    transform: { position: [0, 0, 800], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    tracks: {},
+    centerOfRotation: [0, 0, 0],
+    material: { color: '#ffffff', opacity: 1, metalness: 0, roughness: 1 },
+    light: {
+      enabled: true,
+      color: '#ffffff',
+      intensity: 3,
+      spreadDeg: 130,
+      softness: 0.35,
+      direction: [0, 0, -1],
+    },
+  };
+
+  it('falls back to base light params when unkeyed', () => {
+    const p = evaluateObject(lit, 1000);
+    expect(p.light).toEqual({
+      color: '#ffffff',
+      intensity: 3,
+      spreadDeg: 130,
+      softness: 0.35,
+      direction: [0, 0, -1],
+    });
+  });
+
+  it('interpolates scalar light channels', () => {
+    const obj: SceneObject = {
+      ...lit,
+      tracks: {
+        'light.intensity': [vk(0, 0), vk(1000, 10)],
+        'light.spread': [vk(0, 40), vk(1000, 240)],
+      },
+    };
+    const p = evaluateObject(obj, 500);
+    expect(p.light!.intensity).toBeCloseTo(5, 5);
+    expect(p.light!.spreadDeg).toBeCloseTo(140, 5);
+    expect(p.light!.softness).toBe(0.35); // unkeyed axis stays at base
+  });
+
+  it('interpolates direction axes independently', () => {
+    const obj: SceneObject = {
+      ...lit,
+      tracks: { 'light.direction.1': [vk(0, 0), vk(1000, 1)] },
+    };
+    const p = evaluateObject(obj, 500);
+    expect(p.light!.direction).toEqual([0, 0.5, -1]);
+  });
+
+  it('interpolates the light color track', () => {
+    const obj: SceneObject = {
+      ...lit,
+      tracks: { 'light.color': [vk(0, '#000000'), vk(1000, '#ffffff')] },
+    };
+    expect(evaluateObject(obj, 500).light!.color).toBe('#808080');
+  });
 });
 
 describe('evaluateCamera', () => {
-  const ckf = (timeMs: number, px: number): CameraKeyframe => ({
-    id: `c${timeMs}`,
-    timeMs,
-    position: [px, 0, 0],
-    target: [0, 0, 0],
-    interpolation: 'linear',
-  });
-  it('returns default when no keyframes', () => {
+  it('returns default when tracks are empty', () => {
     const def = { position: [0, 0, 1200] as [number, number, number], target: [0, 0, 0] as [number, number, number] };
-    expect(evaluateCamera(def, [], 500)).toEqual(def);
+    expect(evaluateCamera(def, {}, 500)).toEqual(def);
   });
-  it('interpolates camera position', () => {
+  it('interpolates position and target independently, per axis', () => {
     const def = { position: [0, 0, 0] as [number, number, number], target: [0, 0, 0] as [number, number, number] };
-    const keys = [ckf(0, 0), ckf(1000, 100)];
-    expect(evaluateCamera(def, keys, 500).position[0]).toBeCloseTo(50, 5);
+    const tracks: Tracks = {
+      'position.0': [vk(0, 0), vk(1000, 100)],
+      'target.1': [vk(0, 0), vk(1000, 20)],
+    };
+    const pose = evaluateCamera(def, tracks, 500);
+    expect(pose.position[0]).toBeCloseTo(50, 5);
+    // Untracked axes fall back to the default, unaffected by the animated ones.
+    expect(pose.position[1]).toBe(0);
+    expect(pose.target[1]).toBeCloseTo(10, 5);
+    expect(pose.target[0]).toBe(0);
   });
 });
 
@@ -122,5 +193,68 @@ describe('isObjectActive', () => {
     expect(isObjectActive(obj, 500)).toBe(false);
     expect(isObjectActive(obj, 2000)).toBe(true);
     expect(isObjectActive(obj, 3500)).toBe(false);
+  });
+});
+
+describe('evaluateObject write-on', () => {
+  const textObj: SceneObject = {
+    id: 't',
+    name: 't',
+    type: 'text',
+    parentId: null,
+    assetId: null,
+    visible: true,
+    lifetime: { startMs: 0, endMs: 4000 },
+    transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    tracks: {},
+    centerOfRotation: [0, 0, 0],
+    material: { color: '#fff', opacity: 1, metalness: 0, roughness: 1 },
+    text: {
+      text: 'Hi',
+      fontSize: 40,
+      depth: 10,
+      align: 'center',
+      letterSpacing: 0,
+      lineHeight: 1.15,
+      writeOn: 0.5,
+    },
+  };
+
+  it('uses the base writeOn param when there is no track', () => {
+    expect(evaluateObject(textObj, 1000).writeOn).toBe(0.5);
+  });
+
+  it('evaluates and clamps the text.writeOn track', () => {
+    const obj: SceneObject = {
+      ...textObj,
+      tracks: { 'text.writeOn': [vk(0, 0), vk(1000, 2)] },
+    };
+    expect(evaluateObject(obj, 500).writeOn).toBeCloseTo(1, 5); // clamped
+    expect(evaluateObject(obj, 250).writeOn).toBeCloseTo(0.5, 5);
+  });
+
+  it('is present for text surfaces and absent for plain meshes', () => {
+    const surface: SceneObject = {
+      ...textObj,
+      type: 'surface',
+      text: undefined,
+      surface: {
+        points: [
+          [-10, -10],
+          [10, -10],
+          [0, 10],
+        ],
+        content: 'text',
+        writeOn: 0.25,
+      },
+    };
+    expect(evaluateObject(surface, 0).writeOn).toBe(0.25);
+    const plain: SceneObject = { ...textObj, type: 'mesh', text: undefined };
+    expect(evaluateObject(plain, 0).writeOn).toBeUndefined();
+  });
+
+  it('defaults to fully revealed when no base value is set', () => {
+    const obj: SceneObject = { ...textObj, text: { ...textObj.text!, writeOn: undefined } };
+    expect(evaluateObject(obj, 0).writeOn).toBe(1);
   });
 });

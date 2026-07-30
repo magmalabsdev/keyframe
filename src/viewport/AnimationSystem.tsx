@@ -4,6 +4,7 @@ import { getActiveScene, useDocumentStore } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
 import { evaluateCamera } from '../animation/evaluate';
 import { poseObjectAtTime } from '../animation/pose';
+import { advancePlayhead } from '../animation/playback';
 import { resolveVariables } from '../animation/variables';
 import { applyObjectPose, buildNameMap } from '../render/applyPose';
 import type { Project } from '../state/types';
@@ -34,22 +35,34 @@ export function AnimationSystem() {
 
     let time = editor.playheadMs;
     const playing = editor.playing;
-    if (playing) {
-      time += delta * 1000;
-      if (time >= scene.durationMs) {
-        time = scene.durationMs;
-        editor.setPlayhead(time);
-        editor.setPlaying(false);
-      } else {
-        editor.setPlayhead(time);
-      }
+    if (playing && editor.playRate !== 0) {
+      // A backgrounded tab hands back a multi-second delta on return; cap it so
+      // playback stalls for a moment rather than teleporting down the timeline.
+      const deltaMs = Math.min(delta * 1000, 100);
+      const next = advancePlayhead({
+        timeMs: time,
+        rate: editor.playRate,
+        deltaMs,
+        durationMs: scene.durationMs,
+        loop: editor.loop,
+        inMs: editor.inMs,
+        outMs: editor.outMs,
+        stopAtMs: editor.stopAtMs,
+      });
+      time = next.timeMs;
+      editor.setPlayhead(time);
+      if (next.stop) editor.stopPlayback();
     }
 
     const dirty =
       playing || time !== lastTime.current || project !== lastProject.current;
     if (dirty) {
       const nameMap = buildNameMap(threeScene);
-      const ctx = { bindings: project.bindings, vars: resolveVariables(project, time) };
+      const ctx = {
+        bindings: project.bindings,
+        vars: resolveVariables(project, time),
+        objectById: new Map(scene.objects.map((o) => [o.id, o])),
+      };
       for (const obj of scene.objects) {
         if (obj.id === editor.draggingId) continue;
         applyObjectPose(nameMap, obj, poseObjectAtTime(obj, time, ctx));
@@ -57,9 +70,16 @@ export function AnimationSystem() {
       lastTime.current = time;
       lastProject.current = project;
 
-      // Drive the camera from its keyframes during playback only.
-      if (playing && scene.camera.keyframes.length > 0) {
-        const cam = evaluateCamera(scene.camera.default, scene.camera.keyframes, time);
+      // Drive the camera from its keyframes whenever the frame is dirty (playing
+      // or the playhead was scrubbed), the same as objects — previewing camera
+      // animation by scrubbing requires this, not just playback. Manual camera
+      // navigation never touches playheadMs or the document, so it can't fight
+      // this: the drive only reasserts when the playhead itself moves.
+      const hasCameraTracks = Object.values(scene.camera.tracks ?? {}).some(
+        (t) => t && t.length > 0,
+      );
+      if (hasCameraTracks) {
+        const cam = evaluateCamera(scene.camera.default, scene.camera.tracks, time);
         getControls()?.setLookAt(
           cam.position[0], cam.position[1], cam.position[2],
           cam.target[0], cam.target[1], cam.target[2],

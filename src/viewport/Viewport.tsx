@@ -15,8 +15,11 @@ import { AnimationSystem } from './AnimationSystem';
 import { PivotHandle } from './PivotHandle';
 import { FaceHighlight } from './FaceHighlight';
 import { SceneBackground } from './SceneBackground';
+import { SceneAmbient } from './SceneAmbient';
+import { SurfaceHandles } from './SurfaceHandles';
+import { SurfaceMediaTicker } from './SurfaceMediaTicker';
 import { ViewCube } from './ViewCube';
-import { registerCamera } from './cameraApi';
+import { registerCamera, clipPlanesFor } from './cameraApi';
 import { useMarquee } from './useMarquee';
 import { RenderRegistrar } from '../render/RenderRegistrar';
 import { ViewportToolbar } from '../ui/ViewportToolbar';
@@ -114,11 +117,13 @@ export function Viewport() {
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {/* The camera's near/far are only starting values — CameraRig re-derives
+          them from the camera distance whenever it moves meaningfully. */}
       <Canvas
         frameloop="demand"
         dpr={[1, 2]}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
-        camera={{ fov: 45, near: 1, far: 500000, position: [0, 0, 1200] }}
+        camera={{ fov: 45, ...clipPlanesFor(1200), position: [0, 0, 1200] }}
         onCreated={({ camera }) => {
           // Z-up world: build plate lies on the XY plane, camera looks down -Z.
           camera.up.set(0, 0, 1);
@@ -131,17 +136,19 @@ export function Viewport() {
         <FrameInvalidation />
         <SceneBackground />
 
-        <hemisphereLight args={['#ffffff', '#3a3f4a', 0.6]} />
-        <ambientLight intensity={0.35} />
-        <directionalLight position={[600, -400, 1200]} intensity={1.1} />
-        <directionalLight position={[-500, 600, 400]} intensity={0.35} />
+        {/* The only built-in lighting is the scene's ambient fill (adjustable,
+            0 by choice); everything else comes from light objects and emitter
+            meshes (see SceneObjects LightRig). */}
+        <SceneAmbient />
 
         <BuildPlate />
         <SceneObjects />
         <Gizmo />
         <PivotHandle />
+        <SurfaceHandles />
         <AnimationSystem />
         <FaceHighlight />
+        <SurfaceMediaTicker />
         <RenderRegistrar />
         <CameraRig />
       </Canvas>

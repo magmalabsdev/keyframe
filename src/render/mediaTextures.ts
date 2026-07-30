@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { MediaAsset, TextureMode } from '../state/types';
+import type { MediaAsset, SurfaceFit, TextureMode } from '../state/types';
 import { getMediaUrl } from '../io/mediaCache';
 import { useEditorStore } from '../state/editorStore';
 
@@ -7,6 +7,8 @@ import { useEditorStore } from '../state/editorStore';
 const objectTextures = new Map<string, THREE.Texture>();
 /** Cached 'tile' clones of object textures, keyed by `${mediaId}:${scale}`. */
 const tileTextures = new Map<string, THREE.Texture>();
+/** Cached aspect-corrected surface clones, keyed by `${mediaId}:${fit}:${boxAspect}`. */
+const surfaceTextures = new Map<string, THREE.Texture>();
 
 /** Sets `tile.repeat` so the image tiles at `scale` mm, preserving its native aspect ratio. */
 function applyTileRepeat(tile: THREE.Texture, base: THREE.Texture, scale: number): void {
@@ -35,6 +37,8 @@ function loadBaseTexture(media: MediaAsset): THREE.Texture | undefined {
           applyTileRepeat(tile, texture, Number(key.slice(media.id.length + 1)));
         }
       }
+      const aspect = imageAspectOf(texture);
+      if (aspect) refitSurfaceTextures(media.id, aspect);
       useEditorStore.getState().endBackgroundTask(taskId);
     },
     undefined,
@@ -105,14 +109,22 @@ function getGifTexture(media: MediaAsset): THREE.Texture {
   return texture;
 }
 
-/** Refreshes any animated-GIF background textures so they show the current frame. */
-export function updateAnimatedBackgroundTextures(): void {
+/** Refreshes any animated-GIF textures (background or surface) to the current frame. */
+export function updateAnimatedTextures(): void {
   for (const texture of backgroundImageTextures.values()) {
     texture.needsUpdate = true;
   }
 }
 
-export function getBackgroundVideoElement(media: MediaAsset): HTMLVideoElement {
+/** @deprecated Use `updateAnimatedTextures` — GIFs are no longer background-only. */
+export const updateAnimatedBackgroundTextures = updateAnimatedTextures;
+
+/**
+ * The hidden <video> backing a media asset, created on first use. One element
+ * per asset, shared by the scene background and every surface using it (so
+ * they stay frame-locked, and the exporter has a single thing to seek).
+ */
+export function getVideoElement(media: MediaAsset): HTMLVideoElement {
   let video = videoElements.get(media.id);
   if (!video) {
     video = document.createElement('video');
@@ -130,6 +142,14 @@ export function getBackgroundVideoElement(media: MediaAsset): HTMLVideoElement {
     videoElements.set(media.id, video);
   }
   return video;
+}
+
+/** @deprecated Use `getVideoElement` — videos are no longer background-only. */
+export const getBackgroundVideoElement = getVideoElement;
+
+/** The shared <video> for a media asset, if one has been created. */
+export function getExistingVideoElement(mediaId: string): HTMLVideoElement | undefined {
+  return videoElements.get(mediaId);
 }
 
 /** Returns the background texture for a media asset, creating it on first use. */
@@ -164,6 +184,87 @@ export function getBackgroundTexture(media: MediaAsset): THREE.Texture | undefin
     );
     texture.colorSpace = THREE.SRGBColorSpace;
     backgroundImageTextures.set(media.id, texture);
+  }
+  return texture;
+}
+
+/**
+ * Sets repeat/offset so the image fills `boxAspect` without distortion, centered.
+ * 'cover' samples a sub-region (repeat < 1, cropping the overflow); 'contain'
+ * samples beyond the image (repeat > 1), where ClampToEdge smears the edge
+ * pixel into the letterbox bars.
+ */
+function applyFit(
+  texture: THREE.Texture,
+  imageAspect: number,
+  boxAspect: number,
+  fit: SurfaceFit,
+): void {
+  const ratio = imageAspect / boxAspect;
+  if (fit === 'cover') {
+    if (ratio > 1) texture.repeat.set(1 / ratio, 1); // image wider: crop sides
+    else texture.repeat.set(1, ratio); // image taller: crop top/bottom
+  } else {
+    if (ratio > 1) texture.repeat.set(1, ratio); // image wider: bars top/bottom
+    else texture.repeat.set(1 / ratio, 1); // image taller: bars at the sides
+  }
+  texture.offset.set((1 - texture.repeat.x) / 2, (1 - texture.repeat.y) / 2);
+  texture.needsUpdate = true;
+}
+
+/** Natural aspect of a loaded texture's image, or undefined if not yet known. */
+function imageAspectOf(texture: THREE.Texture): number | undefined {
+  const img = texture.image as { width?: number; height?: number } | undefined;
+  return img?.width && img?.height ? img.width / img.height : undefined;
+}
+
+/** Re-applies fit to every surface clone of a media asset once its size is known. */
+function refitSurfaceTextures(mediaId: string, imageAspect: number): void {
+  for (const [key, texture] of surfaceTextures) {
+    if (!key.startsWith(`${mediaId}:`)) continue;
+    const [, fit, boxAspect] = key.split(':');
+    applyFit(texture, imageAspect, Number(boxAspect), fit as SurfaceFit);
+  }
+}
+
+/**
+ * The texture for a surface's polygon, ready to assign to `map`. Surface UVs
+ * already span the polygon bounds 0..1, so 'stretch' needs no correction and
+ * returns the shared base texture; 'contain'/'cover' get an aspect-corrected
+ * clone. Image and video dimensions arrive asynchronously, so the correction
+ * is re-applied once they are known.
+ */
+export function getSurfaceTexture(
+  media: MediaAsset,
+  fit: SurfaceFit = 'stretch',
+  boxAspect = 1,
+): THREE.Texture | undefined {
+  const base =
+    media.kind === 'video' || media.mimeType === 'image/gif'
+      ? getBackgroundTexture(media)
+      : loadBaseTexture(media);
+  if (!base || fit === 'stretch') return base;
+
+  const key = `${media.id}:${fit}:${boxAspect.toFixed(3)}`;
+  let texture = surfaceTextures.get(key);
+  if (!texture) {
+    texture = base.clone();
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    surfaceTextures.set(key, texture);
+
+    if (media.kind === 'video') {
+      const video = getVideoElement(media);
+      const sync = () =>
+        applyFit(texture!, video.videoWidth / video.videoHeight, boxAspect, fit);
+      if (video.videoWidth) sync();
+      else video.addEventListener('loadedmetadata', sync, { once: true });
+    } else {
+      // Images may still be decoding; loadBaseTexture's onLoad calls
+      // refitSurfaceTextures for anything that wasn't ready here.
+      const aspect = imageAspectOf(base);
+      if (aspect) applyFit(texture, aspect, boxAspect, fit);
+    }
   }
   return texture;
 }

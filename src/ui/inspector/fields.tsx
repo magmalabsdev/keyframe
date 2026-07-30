@@ -517,6 +517,69 @@ function HsvInputs({
   );
 }
 
+/**
+ * Free text that commits on blur (or Enter, when single-line). Like NumberField,
+ * it holds local state while focused so an external update mid-typing doesn't
+ * yank the caret.
+ */
+export function TextField({
+  value,
+  onCommit,
+  multiline,
+  placeholder,
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+  multiline?: boolean;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState(value);
+  const focused = useRef(false);
+
+  useEffect(() => {
+    if (!focused.current) setText(value);
+  }, [value]);
+
+  const commit = () => {
+    focused.current = false;
+    if (text !== value) onCommit(text);
+  };
+
+  const props = {
+    className: styles.numField,
+    value: text,
+    placeholder,
+    spellCheck: false,
+    onFocus: () => {
+      focused.current = true;
+    },
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setText(e.target.value),
+    onBlur: commit,
+  };
+
+  if (multiline) {
+    return (
+      <textarea
+        {...props}
+        rows={3}
+        // Enter inserts a newline here, so commit on Escape as well as blur.
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') e.currentTarget.blur();
+        }}
+      />
+    );
+  }
+  return (
+    <input
+      {...props}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur();
+      }}
+    />
+  );
+}
+
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className={styles.row}>

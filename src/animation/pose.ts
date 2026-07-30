@@ -7,7 +7,12 @@ import {
   type Vec3,
 } from '../state/types';
 import { objectBindingOverrides } from '../state/bindings';
-import { evaluateObject, isObjectActive } from './evaluate';
+import {
+  evaluateObject,
+  evaluateTrack,
+  isObjectActive,
+  type LightValues,
+} from './evaluate';
 
 /** Active "form" transition: which edge, and assemble progress (0=scattered, 1=assembled). */
 export interface FragmentState {
@@ -20,6 +25,14 @@ export interface PoseContext {
   bindings: Record<string, string>;
   /** Resolved variable values at this time (includes `time`). */
   vars: Record<string, number>;
+  /** Scene objects by id, for cross-object reads (glyph -> parent write-on). */
+  objectById?: Map<string, SceneObject>;
+}
+
+/** Evaluated typewriter reveal of a text-capable object at a time (0..1). */
+export function writeOnAtTime(object: SceneObject, timeMs: number): number {
+  const base = object.text?.writeOn ?? object.surface?.writeOn ?? 1;
+  return clamp01(evaluateTrack(object.tracks?.['text.writeOn'], timeMs, base));
 }
 
 /** The full visual state of an object at a time: keyframes + idle + transitions. */
@@ -35,6 +48,11 @@ export interface Pose {
   color: string;
   /** Set when a chunked "form" transition is active; drives fragment rendering. */
   fragment: FragmentState | null;
+  /** Evaluated light emission (light objects / emitter meshes). Consumers
+   *  multiply intensity by opacityMul so fade/flicker dim the light too. */
+  light?: LightValues;
+  /** Typewriter reveal 0..1. Present only for text objects / text surfaces. */
+  writeOn?: number;
 }
 
 function clamp01(p: number): number {
@@ -136,14 +154,47 @@ export function poseObjectAtTime(
     }
   }
 
+  let visible = object.visible && active;
+
+  // Glyphs inherit three things from their parent text (via ctx.objectById):
+  //  - write-on typewriter: hidden while the reveal hasn't reached this
+  //    character's index yet,
+  //  - the parent's transition/idle opacity, so fade/flicker on the text
+  //    dims every character (parent scale/rotation cascade through the three
+  //    hierarchy already; opacity lives on each glyph's own material),
+  //  - the parent's form transition, so the whole word fragments together.
+  //    A transition set on the glyph itself always wins.
+  // Folded into the pose so the live loop and the exporter stay in lockstep.
+  if (object.type === 'glyph' && object.glyph && ctx?.objectById) {
+    const parent = object.parentId ? ctx.objectById.get(object.parentId) : undefined;
+    if (parent?.type === 'text' && parent.text) {
+      const parentPose = poseObjectAtTime(parent, timeMs);
+      if (visible) {
+        const reveal = writeOnAtTime(parent, timeMs);
+        if (reveal < 1) {
+          const count = Math.round(reveal * Array.from(parent.text.text).length);
+          if (object.glyph.index >= count) visible = false;
+        }
+        opacityMul *= parentPose.opacityMul;
+      }
+      if (!fragment && parentPose.fragment) {
+        const own =
+          parentPose.fragment.which === 'start' ? object.startAnim : object.endAnim;
+        if (!own || own.type === 'none') fragment = parentPose.fragment;
+      }
+    }
+  }
+
   return {
     position,
     rotation,
     scale,
     opacity: base.opacity,
     opacityMul,
-    visible: object.visible && active,
+    visible,
     color: base.color,
     fragment,
+    light: base.light,
+    writeOn: base.writeOn,
   };
 }

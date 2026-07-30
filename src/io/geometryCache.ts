@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { GeometryData } from '../state/types';
+import { ensureNormals } from './normals';
 
 /**
  * Runtime caches for geometry, keyed by asset id. Geometry is heavy and is kept
@@ -15,13 +16,20 @@ const dataCache = new Map<string, GeometryData>();
 export function buildGeometry(data: GeometryData): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
-  if (data.normals && data.normals.length > 0) {
+  if (data.normals && data.normals.length === data.positions.length) {
     g.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
   }
   if (data.index && data.index.length > 0) {
     g.setIndex(new THREE.BufferAttribute(data.index, 1));
   }
-  if (!g.getAttribute('normal')) g.computeVertexNormals();
+  // Every render path funnels through here (fresh import, IndexedDB rehydrate,
+  // .kfp reopen, legacy migration), so repairing degenerate normals here also
+  // heals already-saved documents. Point `data` at the repaired array so the
+  // fix reaches the persistence/export caches too — for the common case that's
+  // the same array, rewritten in place.
+  if (ensureNormals(g)) {
+    data.normals = g.getAttribute('normal').array as Float32Array;
+  }
   g.computeBoundingBox();
   g.computeBoundingSphere();
   return g;

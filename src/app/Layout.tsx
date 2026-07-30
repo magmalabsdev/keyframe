@@ -3,9 +3,11 @@ import { LeftBar } from '../ui/LeftBar';
 import { RightBar } from '../ui/RightBar';
 import { BottomBar } from '../ui/BottomBar';
 import { ContextMenu } from '../ui/ContextMenu';
+import { ShortcutHelp } from '../ui/ShortcutHelp';
 import { Viewport } from '../viewport/Viewport';
 import { useGlobalShortcuts } from './useGlobalShortcuts';
 import { useInitPersistence } from './useInitPersistence';
+import { useAudioPlayback } from './useAudioPlayback';
 import { useResizableLayout } from './useResizableLayout';
 import type { CSSProperties } from 'react';
 import styles from './Layout.module.css';
@@ -13,6 +15,7 @@ import styles from './Layout.module.css';
 export function Layout() {
   useGlobalShortcuts();
   useInitPersistence();
+  useAudioPlayback();
   const { size, startDrag } = useResizableLayout();
 
   const sizeVars = {
@@ -56,6 +59,7 @@ export function Layout() {
       />
 
       <ContextMenu />
+      <ShortcutHelp />
     </div>
   );
 }

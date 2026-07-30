@@ -3,6 +3,7 @@ import type * as THREE from 'three';
 import type { GeometryData, MediaAsset, Project, Scene, Variable } from '../state/types';
 import { buildGeometry, getGeometryData, putGeometry, putGeometryData } from './geometryCache';
 import { getMediaBlob, putMedia } from './mediaCache';
+import { decodeAudio } from './audioCache';
 import { migrateProject } from '../state/migrate';
 
 /**
@@ -47,6 +48,19 @@ const MIME_EXT: Record<string, string> = {
   'image/webp': 'webp',
   'video/mp4': 'mp4',
   'video/webm': 'webm',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/ogg': 'ogg',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/flac': 'flac',
+  'audio/webm': 'weba',
+  'font/ttf': 'ttf',
+  'font/otf': 'otf',
+  'font/woff': 'woff',
+  'application/font-sfnt': 'ttf',
+  'application/x-font-ttf': 'ttf',
 };
 
 function extForMime(mimeType: string): string {
@@ -89,8 +103,14 @@ export async function serializeProject(project: Project, sceneIds: string[]): Pr
     for (const obj of scene.objects) {
       if (obj.assetId) usedAssetIds.add(obj.assetId);
       if (obj.material.textureAssetId) usedMediaIds.add(obj.material.textureAssetId);
+      if (obj.surface?.mediaId) usedMediaIds.add(obj.surface.mediaId);
+      if (obj.surface?.fontId) usedMediaIds.add(obj.surface.fontId);
+      if (obj.text?.fontId) usedMediaIds.add(obj.text.fontId);
     }
     if (scene.settings.backgroundMediaId) usedMediaIds.add(scene.settings.backgroundMediaId);
+    for (const track of scene.audioTracks ?? []) {
+      for (const clip of track.clips) usedMediaIds.add(clip.mediaId);
+    }
   }
 
   const files: Record<string, Uint8Array> = {};
@@ -170,7 +190,10 @@ export function parseProjectContainer(bytes: Uint8Array): ParsedContainer {
   for (const meta of Object.values(manifest.mediaMeta ?? {})) {
     const bytes = files[`media/${meta.id}.${extForMime(meta.mimeType)}`];
     if (!bytes) continue;
-    putMedia(meta.id, new Blob([bytes], { type: meta.mimeType }));
+    const blob = new Blob([bytes], { type: meta.mimeType });
+    putMedia(meta.id, blob);
+    // Decode audio into the audio cache so it can play/export after import.
+    if (meta.kind === 'audio') void decodeAudio(meta.id, blob).catch(() => {});
     media[meta.id] = meta;
   }
 

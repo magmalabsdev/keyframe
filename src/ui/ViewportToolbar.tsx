@@ -7,6 +7,7 @@ const TOOLS: { tool: Tool; label: string; glyph: string; key: string }[] = [
   { tool: 'scale', label: 'Scale', glyph: '⤡', key: '3' },
   { tool: 'rotate', label: 'Rotate', glyph: '↻', key: '4' },
   { tool: 'place', label: 'Place', glyph: '⊥', key: '5' },
+  { tool: 'surface', label: 'Surface', glyph: '▣', key: '6' },
 ];
 
 export function ViewportToolbar() {
@@ -25,7 +26,9 @@ export function ViewportToolbar() {
           title={
             t.tool === 'place'
               ? 'Place on face — click a face to lay it on the plate (5)'
-              : `${t.label} (${t.key})`
+              : t.tool === 'surface'
+                ? 'Surface on face — click a face to add text or an image to it (6)'
+                : `${t.label} (${t.key})`
           }
         >
           <span className={styles.glyph}>{t.glyph}</span>
