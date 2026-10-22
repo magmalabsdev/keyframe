@@ -15,6 +15,8 @@ export function ViewportToolbar() {
   const setTool = useEditorStore((s) => s.setTool);
   const snapEnabled = useEditorStore((s) => s.snapEnabled);
   const setSnapEnabled = useEditorStore((s) => s.setSnapEnabled);
+  const viewMode = useEditorStore((s) => s.viewMode);
+  const setViewMode = useEditorStore((s) => s.setViewMode);
 
   return (
     <div className={styles.toolbar}>
@@ -42,6 +44,14 @@ export function ViewportToolbar() {
       >
         <span className={styles.glyph}>⊞</span>
         <span className={styles.label}>Snap</span>
+      </button>
+      <button
+        className={`${styles.tool} ${viewMode === 'camera' ? styles.active : ''}`}
+        onClick={() => setViewMode(viewMode === 'freecam' ? 'camera' : 'freecam')}
+        title="Toggle freecam / camera view (C)"
+      >
+        <span className={styles.glyph}>⧉</span>
+        <span className={styles.label}>Camera</span>
       </button>
     </div>
   );

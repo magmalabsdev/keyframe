@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import {
   DOCUMENT_VERSION,
+  type AudioTrack,
   type ChannelKey,
   type Project,
   type Scene,
@@ -49,6 +50,19 @@ export function migrateProject(project: Project): Project {
   // v4 -> v5: audio tracks. Presence-based backfill so older files load.
   for (const scene of project.scenes) scene.audioTracks ??= [];
   for (const scene of project.scenes) scene.markers ??= [];
+  // Track-level gain was folded into per-clip gain (so volume can be keyframed
+  // per clip). Presence-based: fold the old multiplier into each clip so
+  // existing projects keep the same audible volume, then drop the field.
+  for (const scene of project.scenes) {
+    for (const track of scene.audioTracks as (AudioTrack & { gain?: number })[]) {
+      if (typeof track.gain === 'number') {
+        for (const clip of track.clips) {
+          clip.gain = Math.max(0, Math.min(1, clip.gain * track.gain));
+        }
+        delete track.gain;
+      }
+    }
+  }
   // Overlapping audio clips used to be allowed, and they make playback double
   // up (one voice per clip, same source at two offsets). Heal any document
   // saved before the no-overlap invariant existed.

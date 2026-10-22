@@ -38,12 +38,17 @@ import type {
   ValueKeyframe,
   Vec3,
 } from './types';
-import { defaultIdle, defaultTransition, MARKER_COLORS, TIME_VARIABLE } from './types';
+import { clampFov, defaultIdle, defaultTransition, MARKER_COLORS, TIME_VARIABLE } from './types';
 import { resolveOverlaps } from './audioOverlap';
 import { evaluateExpr, renameIdentifier, varsMap } from './expr';
 import { recomputeBindings, writeBoundValue } from './bindings';
 import { migrateProject } from './migrate';
-import { evaluateCamera, evaluateObject } from '../animation/evaluate';
+import {
+  evaluateCamera,
+  evaluateCameraFov,
+  evaluateObject,
+  evaluateTrack,
+} from '../animation/evaluate';
 import { disposeGeometry } from '../io/geometryCache';
 import { resolveVariables, wouldCreateCycle } from '../animation/variables';
 import { useEditorStore } from './editorStore';
@@ -200,6 +205,8 @@ export interface DocumentState {
   removeCameraKeyframeAtTime: (timeMs: number) => void;
   /** Patch the camera's fallback pose for axes with no keyframes. */
   patchCameraDefault: (patch: Partial<CameraState>) => void;
+  /** Set the camera's static vertical FOV (degrees), used when `fov` is unkeyed. */
+  setCameraFov: (fov: number) => void;
 
   /** Audio tracks + clips (background music, sound effects) on the timeline. */
   /** Timeline markers. Adding at an occupied time is a no-op. */
@@ -212,7 +219,6 @@ export interface DocumentState {
   addAudioTrack: (name?: string) => void;
   removeAudioTrack: (trackId: string) => void;
   renameAudioTrack: (trackId: string, name: string) => void;
-  setAudioTrackGain: (trackId: string, gain: number) => void;
   setAudioTrackMuted: (trackId: string, muted: boolean) => void;
   /** Add a placed clip to a track (kept sorted by start time). */
   addAudioClip: (trackId: string, clip: AudioClip) => void;
@@ -271,6 +277,17 @@ function findAudioTrack(project: Project, trackId: string): AudioTrack | undefin
   const scene = activeSceneDraft(project);
   scene.audioTracks ??= [];
   return scene.audioTracks.find((t) => t.id === trackId);
+}
+
+/** Finds a clip by id across every audio track (clip ids are globally unique,
+ * so the channel-key scheme for gain doesn't need to carry a track id). */
+function findAudioClip(project: Project, clipId: string): AudioClip | undefined {
+  const scene = activeSceneDraft(project);
+  for (const track of scene.audioTracks ?? []) {
+    const clip = track.clips.find((c) => c.id === clipId);
+    if (clip) return clip;
+  }
+  return undefined;
 }
 
 /**
@@ -369,17 +386,28 @@ function resolveChannel(
   }
   if (parts[0] === 'camera') {
     const cam = activeSceneDraft(project).camera;
-    const channel = `${parts[1]}.${parts[2]}` as ChannelKey;
+    // Axis channels are 'camera:position:0'; scalar ones like fov are 'camera:fov'.
+    const channel = (parts.length === 3 ? `${parts[1]}.${parts[2]}` : parts[1]) as ChannelKey;
     cam.tracks ??= {};
     cam.tracks[channel] ??= [];
     return {
       track: cam.tracks[channel]!,
       currentValue: () => {
         const time = useEditorStore.getState().playheadMs;
+        if (channel === 'fov') return evaluateCameraFov(cam, time);
         const pose = evaluateCamera(cam.default, cam.tracks, time);
         const [name, axis] = channel.split('.') as ['position' | 'target', string];
         return pose[name][Number(axis)];
       },
+    };
+  }
+  if (parts[0] === 'audioClip') {
+    const clip = findAudioClip(project, parts[1]);
+    if (!clip) return undefined;
+    clip.gainTrack ??= [];
+    return {
+      track: clip.gainTrack,
+      currentValue: () => evaluateTrack(clip.gainTrack, useEditorStore.getState().playheadMs, clip.gain),
     };
   }
   return undefined;
@@ -390,8 +418,13 @@ function pruneEmptyTracks(project: Project, channelKey: string): void {
   const parts = channelKey.split(':');
   if (parts[0] === 'camera') {
     const cam = activeSceneDraft(project).camera;
-    const channel = `${parts[1]}.${parts[2]}` as ChannelKey;
+    const channel = (parts.length === 3 ? `${parts[1]}.${parts[2]}` : parts[1]) as ChannelKey;
     if (cam.tracks?.[channel]?.length === 0) delete cam.tracks[channel];
+    return;
+  }
+  if (parts[0] === 'audioClip') {
+    const clip = findAudioClip(project, parts[1]);
+    if (clip?.gainTrack?.length === 0) clip.gainTrack = undefined;
     return;
   }
   if (parts[0] !== 'object') return;
@@ -930,6 +963,17 @@ export const useDocumentStore = create<DocumentState>()(
                   offsetMs: clip.offsetMs + firstDur,
                   durationMs: clip.durationMs - firstDur,
                 };
+                // Partition gainTrack the same way object lifetimes split above:
+                // keyframes are absolute-time, so each half keeps its own side,
+                // with fresh ids on the clone's so they never collide.
+                if (clip.gainTrack?.length) {
+                  const before = clip.gainTrack.filter((k) => k.timeMs < playheadMs);
+                  const atOrAfter = clip.gainTrack
+                    .filter((k) => k.timeMs >= playheadMs)
+                    .map((k) => ({ ...k, id: nanoid() }));
+                  clip.gainTrack = before.length ? before : undefined;
+                  newClip.gainTrack = atOrAfter.length ? atOrAfter : undefined;
+                }
                 clip.durationMs = firstDur;
                 track.clips.push(newClip);
               }
@@ -1006,6 +1050,13 @@ export const useDocumentStore = create<DocumentState>()(
           const c = t?.clips.find((x) => x.id === clipId);
           if (!t || !c) return;
           const clone: AudioClip = { ...c, id: nanoid(), startMs: c.startMs + c.durationMs };
+          if (c.gainTrack?.length) {
+            clone.gainTrack = c.gainTrack.map((k) => ({
+              ...k,
+              id: nanoid(),
+              timeMs: k.timeMs + c.durationMs,
+            }));
+          }
           t.clips.push(clone);
           t.clips.sort((a, b) => a.startMs - b.startMs);
           // The slot after the original may already be occupied; the clone wins.
@@ -1024,6 +1075,11 @@ export const useDocumentStore = create<DocumentState>()(
             ['target.1', state.target[1]],
             ['target.2', state.target[2]],
           ];
+          // Only bake fov once it is actually animated: baking it always would
+          // create a fov track (pinning the lens) for users who never touch it.
+          if (cam.tracks.fov?.length) {
+            axes.push(['fov', evaluateCameraFov(cam, timeMs)]);
+          }
           for (const [channel, value] of axes) {
             const track = (cam.tracks[channel] ??= []);
             const existing = track.find(
@@ -1055,6 +1111,11 @@ export const useDocumentStore = create<DocumentState>()(
         set((s) => {
           const cam = activeSceneDraft(s.project).camera;
           cam.default = { ...cam.default, ...patch };
+        }),
+
+      setCameraFov: (fov) =>
+        set((s) => {
+          activeSceneDraft(s.project).camera.fov = clampFov(fov);
         }),
 
       addMarker: (timeMs, name) =>
@@ -1120,11 +1181,6 @@ export const useDocumentStore = create<DocumentState>()(
         set((s) => {
           const t = findAudioTrack(s.project, trackId);
           if (t) t.name = name;
-        }),
-      setAudioTrackGain: (trackId, gain) =>
-        set((s) => {
-          const t = findAudioTrack(s.project, trackId);
-          if (t) t.gain = clamp01(gain);
         }),
       setAudioTrackMuted: (trackId, muted) =>
         set((s) => {
@@ -1326,8 +1382,16 @@ export function getChannelTrack(
     return obj?.tracks?.[channel];
   }
   if (parts[0] === 'camera') {
-    const channel = `${parts[1]}.${parts[2]}` as ChannelKey;
+    const channel = (parts.length === 3 ? `${parts[1]}.${parts[2]}` : parts[1]) as ChannelKey;
     return getActiveScene(project).camera.tracks?.[channel];
+  }
+  if (parts[0] === 'audioClip') {
+    const scene = getActiveScene(project);
+    for (const track of scene.audioTracks ?? []) {
+      const clip = track.clips.find((c) => c.id === parts[1]);
+      if (clip) return clip.gainTrack;
+    }
+    return undefined;
   }
   return undefined;
 }

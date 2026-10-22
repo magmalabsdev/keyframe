@@ -34,6 +34,7 @@ export type ShortcutGroup =
   | 'Keyframes'
   | 'Edit'
   | 'Tools'
+  | 'View'
   | 'General';
 
 export interface Binding {
@@ -457,6 +458,15 @@ export const KEYMAP: Binding[] = [
     group: 'Tools',
     run: () => editor().setTool(tool),
   })),
+
+  // ----------------------------------------------------------------- View
+  {
+    id: 'view.toggleCamera',
+    code: 'KeyC',
+    label: 'Toggle camera / freecam view',
+    group: 'View',
+    run: () => editor().setViewMode(editor().viewMode === 'freecam' ? 'camera' : 'freecam'),
+  },
 
   // -------------------------------------------------------------- General
   {

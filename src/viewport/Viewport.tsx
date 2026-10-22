@@ -8,6 +8,7 @@ import { getR3F } from '../render/renderApi';
 import { selectInScene } from '../scene/grouping';
 import { openSelectionMenu } from '../ui/ContextMenu';
 import { BuildPlate } from './BuildPlate';
+import { CameraFrustum } from './CameraFrustum';
 import { CameraRig } from './CameraRig';
 import { SceneObjects } from './SceneObjects';
 import { Gizmo } from './Gizmo';
@@ -73,6 +74,7 @@ function pickObjectId(clientX: number, clientY: number): string | null {
 export function Viewport() {
   const exportProgress = useEditorStore((s) => s.exportProgress);
   const renderPreview = useEditorStore((s) => s.renderPreview);
+  const viewMode = useEditorStore((s) => s.viewMode);
   const backgroundTasks = useEditorStore((s) => s.backgroundTasks);
   const [dragOver, setDragOver] = useState(false);
   const marquee = useMarquee();
@@ -88,7 +90,11 @@ export function Viewport() {
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
-        if (e.dataTransfer.files.length) void importModelFiles(e.dataTransfer.files);
+        if (e.dataTransfer.files.length) {
+          void importModelFiles(e.dataTransfer.files).then(({ errors }) => {
+            if (errors.length) alert('Some files failed to import:\n' + errors.join('\n'));
+          });
+        }
       }}
       onPointerDown={(e) => {
         if (e.button !== 2 || renderPreview) return;
@@ -144,6 +150,7 @@ export function Viewport() {
         <BuildPlate />
         <SceneObjects />
         <Gizmo />
+        <CameraFrustum />
         <PivotHandle />
         <SurfaceHandles />
         <AnimationSystem />
@@ -217,6 +224,10 @@ export function Viewport() {
       {renderPreview ? (
         <div className={styles.renderHud}>
           <span>● Rendering — press Space to stop</span>
+        </div>
+      ) : viewMode === 'camera' ? (
+        <div className={styles.hud}>
+          <span>Camera view — press C for freecam</span>
         </div>
       ) : (
         <div className={styles.hud}>

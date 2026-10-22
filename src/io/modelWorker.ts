@@ -4,6 +4,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ensureNormals } from './normals';
+import { centerParts } from './parts';
 
 /** A parsed part shipped back to the main thread as transferable typed arrays. */
 export interface WorkerPart {
@@ -78,33 +79,6 @@ function toPart(name: string, g: THREE.BufferGeometry, color?: string): WorkerPa
     normals: normal ? Float32Array.from(normal.array as ArrayLike<number>) : undefined,
     index: index ? Uint32Array.from(index.array as ArrayLike<number>) : undefined,
   };
-}
-
-/** Center all parts together: combined bbox centered in XY, resting on z=0. */
-function centerParts(parts: WorkerPart[]): void {
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  for (const p of parts) {
-    const a = p.positions;
-    for (let i = 0; i < a.length; i += 3) {
-      if (a[i] < minX) minX = a[i];
-      if (a[i] > maxX) maxX = a[i];
-      if (a[i + 1] < minY) minY = a[i + 1];
-      if (a[i + 1] > maxY) maxY = a[i + 1];
-      if (a[i + 2] < minZ) minZ = a[i + 2];
-      if (a[i + 2] > maxZ) maxZ = a[i + 2];
-    }
-  }
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  for (const p of parts) {
-    const a = p.positions;
-    for (let i = 0; i < a.length; i += 3) {
-      a[i] -= cx;
-      a[i + 1] -= cy;
-      a[i + 2] -= minZ;
-    }
-  }
 }
 
 // ---- STEP (occt-import-js) ----

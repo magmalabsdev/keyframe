@@ -1,6 +1,13 @@
 import { getActiveScene, useDocumentStore } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
-import type { CameraState, ChannelKey, LightParams, Transform, ValueKeyframe } from '../state/types';
+import {
+  clampFov,
+  type CameraState,
+  type ChannelKey,
+  type LightParams,
+  type Transform,
+  type ValueKeyframe,
+} from '../state/types';
 import { evaluateObject, type LightValues } from './evaluate';
 
 function findObject(objectId: string) {
@@ -77,6 +84,22 @@ export function applyCameraTransformEdit(patch: {
     }
   }
   if (staticPatch) doc.patchCameraDefault(staticPatch);
+}
+
+/**
+ * Apply a FOV edit from the inspector. Auto-keys at the playhead when the fov
+ * channel is animated, otherwise updates the camera's static lens — the same
+ * rule applyCameraTransformEdit uses per position/target axis.
+ */
+export function applyCameraFovEdit(fov: number): void {
+  const doc = useDocumentStore.getState();
+  const scene = getActiveScene(doc.project);
+  const value = clampFov(fov);
+  if ((scene.camera.tracks?.fov?.length ?? 0) > 0) {
+    doc.setChannelKeyframeValue('camera:fov', useEditorStore.getState().playheadMs, value);
+  } else {
+    doc.setCameraFov(value);
+  }
 }
 
 /**

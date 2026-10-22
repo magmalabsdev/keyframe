@@ -5,9 +5,16 @@ import {
   evaluateColorTrack,
   evaluateObject,
   evaluateCamera,
+  evaluateCameraFov,
   isObjectActive,
 } from './evaluate';
-import type { Easing, SceneObject, Tracks, ValueKeyframe } from '../state/types';
+import {
+  DEFAULT_FOV,
+  type Easing,
+  type SceneObject,
+  type Tracks,
+  type ValueKeyframe,
+} from '../state/types';
 
 function vk(timeMs: number, value: number | string, interpolation: Easing = 'linear'): ValueKeyframe {
   return { id: `k${timeMs}`, timeMs, value, interpolation };
@@ -182,6 +189,34 @@ describe('evaluateCamera', () => {
     expect(pose.position[1]).toBe(0);
     expect(pose.target[1]).toBeCloseTo(10, 5);
     expect(pose.target[0]).toBe(0);
+  });
+});
+
+describe('evaluateCameraFov', () => {
+  const pose = {
+    position: [0, 0, 1200] as [number, number, number],
+    target: [0, 0, 0] as [number, number, number],
+  };
+
+  it('falls back to DEFAULT_FOV when the camera has no stored fov', () => {
+    // Pre-fov documents: `fov` is absent rather than 0, so it must not read as 0.
+    expect(evaluateCameraFov({ default: pose, tracks: {} }, 500)).toBe(DEFAULT_FOV);
+  });
+
+  it('uses the static fov when the channel is unkeyed', () => {
+    expect(evaluateCameraFov({ default: pose, fov: 30, tracks: {} }, 500)).toBe(30);
+  });
+
+  it('interpolates a keyed fov track', () => {
+    const camera = {
+      default: pose,
+      fov: 45,
+      tracks: { fov: [vk(0, 20), vk(1000, 60)] } as Tracks,
+    };
+    expect(evaluateCameraFov(camera, 500)).toBeCloseTo(40, 5);
+    // Clamps to the first/last key outside the track's range.
+    expect(evaluateCameraFov(camera, -100)).toBeCloseTo(20, 5);
+    expect(evaluateCameraFov(camera, 5000)).toBeCloseTo(60, 5);
   });
 });
 

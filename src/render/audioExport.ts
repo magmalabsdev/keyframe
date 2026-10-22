@@ -8,6 +8,7 @@ import type { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 import type { Scene } from '../state/types';
 import { getMediaBlob } from '../io/mediaCache';
 import { decodeAudio, getAudioBuffer } from '../io/audioCache';
+import { hasGainKeyframes, sampleGainCurve } from './gainAutomation';
 
 export const EXPORT_SAMPLE_RATE = 48000;
 const EXPORT_CHANNELS = 2;
@@ -56,12 +57,18 @@ export async function mixSceneAudio(scene: Scene): Promise<AudioBuffer | null> {
         src.loopEnd = buffer.duration;
       }
       const gain = offline.createGain();
-      gain.gain.value = track.gain * clip.gain;
+      const when = Math.max(0, clip.startMs / 1000);
+      const durationSec = clip.durationMs / 1000;
+      if (hasGainKeyframes(clip)) {
+        const curve = sampleGainCurve(clip, false, clip.startMs, clip.startMs + clip.durationMs);
+        gain.gain.setValueCurveAtTime(curve, when, durationSec);
+      } else {
+        gain.gain.value = clip.gain;
+      }
       src.connect(gain).connect(offline.destination);
 
-      const when = Math.max(0, clip.startMs / 1000);
       src.start(when, clip.offsetMs / 1000);
-      src.stop(when + clip.durationMs / 1000);
+      src.stop(when + durationSec);
     }
   }
 

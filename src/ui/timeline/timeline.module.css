@@ -236,6 +236,10 @@
 .audioClip .lifeHandle {
   background: var(--ok);
 }
+.audioClip.selected {
+  outline: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 45%, var(--panel-2));
+}
 .waveform {
   position: absolute;
   inset: 0;

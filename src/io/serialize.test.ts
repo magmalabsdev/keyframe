@@ -196,7 +196,6 @@ describe('serializeProject / parseProjectContainer', () => {
         id: 'trk1',
         name: 'Music',
         muted: false,
-        gain: 0.8,
         clips: [
           {
             id: 'clip1',
@@ -206,7 +205,7 @@ describe('serializeProject / parseProjectContainer', () => {
             offsetMs: 100,
             durationMs: 4000,
             sourceDurationMs: 6000,
-            gain: 1,
+            gain: 0.8,
             loop: true,
           },
         ],
@@ -221,7 +220,6 @@ describe('serializeProject / parseProjectContainer', () => {
     expect(out.media['song1'].kind).toBe('audio');
     const outTracks = out.scenes[0].audioTracks;
     expect(outTracks).toHaveLength(1);
-    expect(outTracks[0].gain).toBe(0.8);
     expect(outTracks[0].clips[0]).toEqual(project.scenes[0].audioTracks[0].clips[0]);
   });
 

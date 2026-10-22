@@ -14,6 +14,7 @@ import {
 } from './cameraApi';
 import { getR3F } from '../render/renderApi';
 import { isTyping } from '../app/isTyping';
+import { useEditorStore } from '../state/editorStore';
 
 const _ndc = new THREE.Vector2();
 const _ray = new THREE.Raycaster();
@@ -92,6 +93,17 @@ export function CameraRig() {
   const ref = useRef<CameraControlsImpl | null>(null);
   const keys = useRef<Set<string>>(new Set());
   const invalidate = useThree((s) => s.invalidate);
+  const viewMode = useEditorStore((s) => s.viewMode);
+
+  // In 'camera' mode the viewport is locked to the scene camera: suppress all
+  // manual navigation (camera-controls' own drag/wheel handling) while still
+  // allowing AnimationSystem to drive the pose programmatically via setLookAt.
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    c.enabled = viewMode === 'freecam';
+    if (viewMode !== 'freecam') keys.current.clear();
+  }, [viewMode]);
 
   useEffect(() => {
     const c = ref.current;
@@ -154,6 +166,7 @@ export function CameraRig() {
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 2) return;
+      if (!c.enabled) return;
       const root = getR3F();
       if (!root) return;
 
@@ -272,6 +285,7 @@ export function CameraRig() {
       invalidate();
     }
 
+    if (!c.enabled) return;
     const k = keys.current;
     if (k.size === 0) return;
 

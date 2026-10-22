@@ -154,7 +154,6 @@ describe('clipBoundaryTimes', () => {
         id: 't1',
         name: 'A',
         muted: false,
-        gain: 1,
         clips: [
           {
             id: 'c1',
@@ -218,7 +217,7 @@ describe('clipBoundaryTimes', () => {
       loop: false,
     });
     scene.audioTracks = [
-      { id: 't1', name: 'A', muted: false, gain: 1, clips: [clip('c1', 0, 500), clip('c2', 2000, 500)] },
+      { id: 't1', name: 'A', muted: false, clips: [clip('c1', 0, 500), clip('c2', 2000, 500)] },
     ];
     expect(clipBoundaryTimes(scene, { audioClipIds: ['c1'] })).toEqual([2000, 2500]);
   });

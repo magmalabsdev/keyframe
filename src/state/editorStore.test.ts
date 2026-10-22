@@ -119,3 +119,71 @@ describe('in / out points', () => {
     expect(api().outMs).toBe(1500);
   });
 });
+
+/**
+ * The camera is selectable but is not a SceneObject, so it gets its own flag
+ * rather than a reserved id inside `selectedIds` — everything consuming that
+ * array assumes each entry resolves to a real object. These tests pin the
+ * three-way exclusivity that makes that safe.
+ */
+describe('selection exclusivity', () => {
+  beforeEach(() => {
+    api().clearSelection();
+  });
+
+  it('starts with nothing selected', () => {
+    expect(api().selectedIds).toEqual([]);
+    expect(api().selectedAudioClipId).toBeNull();
+    expect(api().cameraSelected).toBe(false);
+  });
+
+  it('selecting the camera clears object and audio selection', () => {
+    api().setSelection(['obj-1']);
+    api().setCameraSelected(true);
+    expect(api().cameraSelected).toBe(true);
+    expect(api().selectedIds).toEqual([]);
+    expect(api().selectedAudioClipId).toBeNull();
+  });
+
+  it('selecting an object clears the camera', () => {
+    api().setCameraSelected(true);
+    api().setSelection(['obj-1']);
+    expect(api().cameraSelected).toBe(false);
+    expect(api().selectedIds).toEqual(['obj-1']);
+  });
+
+  it('toggling an object into the selection clears the camera', () => {
+    api().setCameraSelected(true);
+    api().toggleSelection('obj-1', true);
+    expect(api().cameraSelected).toBe(false);
+    expect(api().selectedIds).toEqual(['obj-1']);
+  });
+
+  it('selecting an audio clip clears the camera', () => {
+    api().setCameraSelected(true);
+    api().setSelectedAudioClip('clip-1');
+    expect(api().cameraSelected).toBe(false);
+    expect(api().selectedAudioClipId).toBe('clip-1');
+  });
+
+  it('the camera never lands in selectedIds', () => {
+    api().setCameraSelected(true);
+    expect(api().selectedIds).toEqual([]);
+  });
+
+  it('clearSelection deselects the camera too', () => {
+    api().setCameraSelected(true);
+    api().clearSelection();
+    expect(api().cameraSelected).toBe(false);
+  });
+
+  it('setSelection([]) leaves the camera alone; clearSelection is the deselect-all', () => {
+    api().setCameraSelected(true);
+    // Only a *non-empty* setSelection means "something else was selected", so an
+    // empty one is not a deselect — matching how it already treats audio clips.
+    // Empty viewport clicks go through clearSelection() (useMarquee.ts:140),
+    // which does drop the camera and fall back to the scene inspector.
+    api().setSelection([]);
+    expect(api().cameraSelected).toBe(true);
+  });
+});

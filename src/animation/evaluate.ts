@@ -1,12 +1,14 @@
-import type {
-  CameraState,
-  ChannelKey,
-  Easing,
-  SceneObject,
-  Tracks,
-  Transform,
-  ValueKeyframe,
-  Vec3,
+import {
+  DEFAULT_FOV,
+  type Camera,
+  type CameraState,
+  type ChannelKey,
+  type Easing,
+  type SceneObject,
+  type Tracks,
+  type Transform,
+  type ValueKeyframe,
+  type Vec3,
 } from '../state/types';
 
 /** Maps a normalized 0..1 progress through an easing curve. */
@@ -183,4 +185,14 @@ export function evaluateCamera(
     position: evalAxes(tracks, AXIS_CHANNELS.position, timeMs, cameraDefault.position),
     target: evalAxes(tracks, AXIS_CHANNELS.target, timeMs, cameraDefault.target),
   };
+}
+
+/**
+ * Camera vertical FOV (degrees) at a given time. Kept separate from
+ * `evaluateCamera` so that function's `CameraState` return stays a pure pose —
+ * it feeds `applyCameraState`/`getCameraState`, which talk to camera-controls
+ * and have no concept of a lens.
+ */
+export function evaluateCameraFov(camera: Camera, timeMs: number): number {
+  return evaluateTrack(camera.tracks?.fov, timeMs, camera.fov ?? DEFAULT_FOV);
 }

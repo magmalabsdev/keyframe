@@ -4,6 +4,9 @@ import type { TimelineSnapModes } from '../animation/timeNav';
 
 export type Tool = 'select' | 'move' | 'scale' | 'rotate' | 'place' | 'surface';
 export type SaveStatus = 'idle' | 'saving' | 'saved';
+/** 'freecam' is free navigation (WASD/EQ, orbit, zoom); 'camera' locks the
+ * viewport to exactly what the scene's keyframed/default camera sees. */
+export type ViewMode = 'freecam' | 'camera';
 
 /** A background operation (import, texture load, etc.) shown in the top-center HUD. */
 export interface BackgroundTask {
@@ -20,7 +23,21 @@ export interface BackgroundTask {
  */
 export interface EditorState {
   selectedIds: string[];
+  /** The selected audio clip (its id, globally unique), if any. Mutually
+   * exclusive with `selectedIds` — selecting one clears the other, mirroring
+   * how a single scene-object selection swaps the inspector's contents. */
+  selectedAudioClipId: string | null;
+  /**
+   * The scene camera is selected (it has a row in the objects list and its own
+   * inspector). Mutually exclusive with `selectedIds` and `selectedAudioClipId`,
+   * exactly like those two are with each other. Deliberately NOT a reserved id
+   * inside `selectedIds`: everything consuming that array assumes each entry
+   * resolves to a real SceneObject, so a synthetic id would make the camera look
+   * deletable/copyable and would corrupt shift-range selection.
+   */
+  cameraSelected: boolean;
   activeTool: Tool;
+  viewMode: ViewMode;
   playheadMs: number;
   playing: boolean;
   /**
@@ -86,7 +103,11 @@ export interface EditorState {
   setSelection: (ids: string[]) => void;
   toggleSelection: (id: string, additive: boolean) => void;
   clearSelection: () => void;
+  setSelectedAudioClip: (id: string | null) => void;
+  /** Select (or deselect) the scene camera, clearing any other selection. */
+  setCameraSelected: (on: boolean) => void;
   setTool: (tool: Tool) => void;
+  setViewMode: (mode: ViewMode) => void;
   setPlayhead: (ms: number) => void;
   setPlaying: (playing: boolean) => void;
   /** Set the signed rate; 0 stops. Keeps `playing` in sync. */
@@ -163,7 +184,10 @@ function loadRowScale(): number {
 
 export const useEditorStore = create<EditorState>((set) => ({
   selectedIds: [],
+  selectedAudioClipId: null,
+  cameraSelected: false,
   activeTool: 'move',
+  viewMode: 'freecam',
   playheadMs: 0,
   playing: false,
   playRate: 0,
@@ -188,16 +212,34 @@ export const useEditorStore = create<EditorState>((set) => ({
   timelineViewStartMs: 0,
   timelineRowScale: loadRowScale(),
 
-  setSelection: (ids) => set({ selectedIds: ids }),
+  setSelection: (ids) =>
+    set(
+      ids.length
+        ? { selectedIds: ids, selectedAudioClipId: null, cameraSelected: false }
+        : { selectedIds: ids },
+    ),
   toggleSelection: (id, additive) =>
     set((s) => {
-      if (!additive) return { selectedIds: [id] };
+      if (!additive) return { selectedIds: [id], selectedAudioClipId: null, cameraSelected: false };
       return s.selectedIds.includes(id)
         ? { selectedIds: s.selectedIds.filter((x) => x !== id) }
-        : { selectedIds: [...s.selectedIds, id] };
+        : {
+            selectedIds: [...s.selectedIds, id],
+            selectedAudioClipId: null,
+            cameraSelected: false,
+          };
     }),
-  clearSelection: () => set({ selectedIds: [] }),
+  clearSelection: () => set({ selectedIds: [], selectedAudioClipId: null, cameraSelected: false }),
+  setSelectedAudioClip: (id) =>
+    set(
+      id
+        ? { selectedAudioClipId: id, selectedIds: [], cameraSelected: false }
+        : { selectedAudioClipId: id },
+    ),
+  setCameraSelected: (on) =>
+    set(on ? { cameraSelected: true, selectedIds: [], selectedAudioClipId: null } : { cameraSelected: false }),
   setTool: (tool) => set({ activeTool: tool }),
+  setViewMode: (mode) => set({ viewMode: mode }),
   setPlayhead: (ms) => set({ playheadMs: Math.max(0, ms) }),
   // Pausing always exits a clean-render preview. `playRate` is kept in lockstep
   // so every consumer of `playing` (animation loop, audio, transport UI) stays

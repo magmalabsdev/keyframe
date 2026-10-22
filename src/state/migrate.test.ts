@@ -151,7 +151,6 @@ describe('migrateProject (v4 -> v5 audio tracks)', () => {
         id: 't1',
         name: 'Music',
         muted: false,
-        gain: 1,
         clips: [
           {
             id: 'c1',
@@ -170,6 +169,37 @@ describe('migrateProject (v4 -> v5 audio tracks)', () => {
     const out = migrateProject(p);
     expect(out.scenes[0].audioTracks).toHaveLength(1);
     expect(out.scenes[0].audioTracks[0].clips[0].mediaId).toBe('media-1');
+  });
+
+  it('folds a legacy track-level gain into each clip, then drops the field', () => {
+    const p = v2Project();
+    p.scenes[0].audioTracks = [
+      {
+        id: 't1',
+        name: 'Music',
+        muted: false,
+        // A pre-migration document could still have this; cast since the
+        // current AudioTrack type no longer declares it.
+        gain: 0.5,
+        clips: [
+          {
+            id: 'c1',
+            name: 'song',
+            mediaId: 'media-1',
+            startMs: 0,
+            offsetMs: 0,
+            durationMs: 1000,
+            sourceDurationMs: 1000,
+            gain: 0.8,
+            loop: false,
+          },
+        ],
+      } as unknown as (typeof p.scenes)[0]['audioTracks'][0],
+    ];
+    const out = migrateProject(p);
+    const track = out.scenes[0].audioTracks[0] as unknown as { gain?: number };
+    expect(track.gain).toBeUndefined();
+    expect(out.scenes[0].audioTracks[0].clips[0].gain).toBeCloseTo(0.4, 9); // 0.5 * 0.8
   });
 });
 

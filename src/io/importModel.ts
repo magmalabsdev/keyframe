@@ -3,7 +3,7 @@ import { useDocumentStore, getActiveScene } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
 import { defaultMaterial, identityTransform } from '../state/defaults';
 import type { Asset, ModelFormat, SceneObject } from '../state/types';
-import { loadModelFile, type LoadedPart } from './loaders';
+import { COMPANION_EXTENSIONS, loadModelFile, type LoadedPart } from './loaders';
 import { buildGeometry, putGeometry, putGeometryData } from './geometryCache';
 import { persistGeometriesDeferred } from './persistence';
 import type { GeometryData } from '../state/types';
@@ -25,7 +25,11 @@ function formatForFile(fileName: string): ModelFormat {
  * one commit at the end) and the background-task HUD shows a running part count,
  * so a large assembly appears progressively and stays responsive.
  */
-export async function importModelFile(file: File): Promise<string[]> {
+export async function importModelFile(
+  file: File,
+  /** Companion files (lowercased name → File), e.g. a .gltf's .bin and textures. */
+  resources: Map<string, File> = new Map(),
+): Promise<string[]> {
   const taskId = 'model-import';
   const editor = useEditorStore.getState();
   editor.startBackgroundTask(taskId, `Importing ${file.name}…`);
@@ -94,7 +98,7 @@ export async function importModelFile(file: File): Promise<string[]> {
   };
 
   try {
-    await loadModelFile(file, editor.importQuality, mountParts);
+    await loadModelFile(file, editor.importQuality, mountParts, resources);
   } finally {
     useEditorStore.getState().endBackgroundTask(taskId);
   }
@@ -107,15 +111,30 @@ export async function importModelFile(file: File): Promise<string[]> {
   return ids;
 }
 
-/** Imports several files in sequence, collecting any failures. */
+const extOf = (name: string) => (name.split('.').pop() ?? '').toLowerCase();
+
+/**
+ * Imports several files in sequence, collecting any failures. Companion files
+ * (.bin buffers, textures) aren't imported themselves; they're made available
+ * to the models selected with them so external references resolve.
+ */
 export async function importModelFiles(
   files: FileList | File[],
 ): Promise<{ imported: number; errors: string[] }> {
   const errors: string[] = [];
   let imported = 0;
+  const resources = new Map<string, File>();
+  const models: File[] = [];
   for (const file of Array.from(files)) {
+    if (COMPANION_EXTENSIONS.includes(extOf(file.name))) resources.set(file.name.toLowerCase(), file);
+    else models.push(file);
+  }
+  if (models.length === 0 && resources.size > 0) {
+    errors.push('No model file selected — choose the .gltf (or other model) along with its resources');
+  }
+  for (const file of models) {
     try {
-      await importModelFile(file);
+      await importModelFile(file, resources);
       imported += 1;
     } catch (err) {
       errors.push(`${file.name}: ${(err as Error).message}`);

@@ -124,6 +124,31 @@ describe('splitAtPlayhead', () => {
     expect(first.durationMs + second.durationMs).toBe(1000);
   });
 
+  it('partitions an audio clip’s gain keyframes on split, absolute-time and fresh ids', () => {
+    setup([]);
+    api().addAudioTrack('t1');
+    const trackId = scene().audioTracks[0].id;
+    api().addAudioClip(
+      trackId,
+      clip({
+        id: 'c1',
+        startMs: 0,
+        durationMs: 1000,
+        gainTrack: [kf(100, 0.2), kf(400, 0.5), kf(500, 0.8), kf(900, 1)],
+      }),
+    );
+
+    api().splitAtPlayhead(500, []);
+
+    const clips = scene().audioTracks[0].clips;
+    const first = clips.find((c) => c.id === 'c1')!;
+    const second = clips.find((c) => c.id !== 'c1')!;
+    expect(first.gainTrack?.map((k) => k.timeMs)).toEqual([100, 400]);
+    // timeMs === playheadMs (500) goes to the clone, per the ">=" boundary rule.
+    expect(second.gainTrack?.map((k) => k.timeMs)).toEqual([500, 900]);
+    expect(second.gainTrack?.every((k) => k.id !== 'k500' && k.id !== 'k900')).toBe(true);
+  });
+
   it('does not split an audio clip when a single object is selected', () => {
     setup([obj({ id: 'a', lifetime: { startMs: 0, endMs: 1000 } })]);
     api().addAudioTrack('t1');
@@ -276,5 +301,21 @@ describe('duplicateAudioClipAdjacent', () => {
     const dup = clips.find((c) => c.id !== 'c1')!;
     expect(dup.startMs).toBe(1000);
     expect(dup.durationMs).toBe(1000);
+  });
+
+  it('shifts gain keyframes by the clip’s duration, with fresh ids', () => {
+    api().addAudioTrack('t1');
+    const trackId = scene().audioTracks[0].id;
+    api().addAudioClip(
+      trackId,
+      clip({ id: 'c1', startMs: 100, durationMs: 500, gainTrack: [kf(100, 0), kf(400, 1)] }),
+    );
+    api().duplicateAudioClipAdjacent(trackId, 'c1');
+    const dup = scene().audioTracks[0].clips.find((c) => c.id !== 'c1')!;
+    expect(dup.gainTrack?.map((k) => [k.timeMs, k.value])).toEqual([
+      [600, 0],
+      [900, 1],
+    ]);
+    expect(dup.gainTrack?.every((k) => k.id !== 'k100' && k.id !== 'k400')).toBe(true);
   });
 });

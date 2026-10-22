@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import {
+  DEFAULT_FOV,
   DOCUMENT_VERSION,
   type AudioTrack,
   type LightParams,
@@ -201,7 +202,7 @@ export function createGlyphObject(
 
 /** A new, empty audio track. */
 export function createAudioTrack(name = 'Audio'): AudioTrack {
-  return { id: nanoid(), name, muted: false, gain: 1, clips: [] };
+  return { id: nanoid(), name, muted: false, clips: [] };
 }
 
 export function createDefaultScene(name = 'Scene 1'): Scene {
@@ -223,6 +224,7 @@ export function createDefaultScene(name = 'Scene 1'): Scene {
     camera: {
       // Looking straight down -Z at the build plate origin (Z-up world).
       default: { position: [0, 0, 1200], target: [0, 0, 0] },
+      fov: DEFAULT_FOV,
       tracks: {},
     },
     // Scenes start with one deletable default light (there is no other

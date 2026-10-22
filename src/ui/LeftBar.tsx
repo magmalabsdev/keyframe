@@ -6,15 +6,46 @@ import { createLightObject, createSurfaceObject, createTextObject } from '../sta
 import { buildGlyphObjects } from '../scene/textLayout';
 import { loadThreeFont } from '../io/fonts';
 import { importModelFiles } from '../io/importModel';
-import { SUPPORTED_EXTENSIONS } from '../io/loaders';
+import { COMPANION_EXTENSIONS, SUPPORTED_EXTENSIONS } from '../io/loaders';
 import { childrenOf, flattenTree } from '../scene/tree';
 import { groupSelection, ungroupSelection } from '../scene/grouping';
 import { openSelectionMenu } from './ContextMenu';
-import { ObjectTypeIcon } from './ObjectTypeIcon';
+import { CameraIcon, ObjectTypeIcon } from './ObjectTypeIcon';
 import type { Asset, SceneObject } from '../state/types';
 import styles from './LeftBar.module.css';
 
-const ACCEPT = SUPPORTED_EXTENSIONS.map((e) => `.${e}`).join(',');
+const ACCEPT = [...SUPPORTED_EXTENSIONS, ...COMPANION_EXTENSIONS].map((e) => `.${e}`).join(',');
+
+/**
+ * The scene camera, pinned above the object tree. It is not a SceneObject and
+ * not part of the tree: it can't be hidden, deleted, grouped or reparented, so
+ * it deliberately omits the eye/delete buttons and takes no part in shift-range
+ * selection. The hidden spacers keep its icon aligned with the tree's.
+ */
+function CameraRow() {
+  const cameraSelected = useEditorStore((s) => s.cameraSelected);
+  const setCameraSelected = useEditorStore((s) => s.setCameraSelected);
+
+  return (
+    <div
+      className={`${styles.objectRow} ${cameraSelected ? styles.selected : ''}`}
+      style={{ paddingLeft: 6 }}
+      onPointerDown={() => setCameraSelected(true)}
+      title="Scene camera"
+    >
+      <span className={styles.disclosure} />
+      <span className={styles.eye} style={{ visibility: 'hidden' }} aria-hidden>
+        ◉
+      </span>
+      <span className={styles.objectName}>
+        <span className={styles.typeIcon}>
+          <CameraIcon />
+        </span>
+        <span>Camera</span>
+      </span>
+    </div>
+  );
+}
 
 function ObjectRow({
   obj,
@@ -266,7 +297,7 @@ export function LeftBar() {
               className={styles.importBtn}
               onClick={() => fileInput.current?.click()}
               disabled={busy}
-              title="Import STL, OBJ, glTF/GLB, or STEP"
+              title="Import STL, OBJ, glTF/GLB, FBX, or STEP"
             >
               {busy ? 'Importing…' : '+ Import'}
             </button>
@@ -300,6 +331,7 @@ export function LeftBar() {
         </div>
 
         <div className={styles.objectList}>
+          <CameraRow />
           {objects.length === 0 ? (
             <div className={styles.empty}>
               No objects yet.

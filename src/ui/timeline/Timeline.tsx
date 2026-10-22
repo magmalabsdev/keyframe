@@ -312,7 +312,7 @@ export function Timeline() {
             </div>
           ))}
           <div className={styles.labelCell}>
-            <span className={`${styles.labelText} ${styles.labelHead}`}>Scene</span>
+            <span className={`${styles.labelText} ${styles.labelHead}`}>Camera</span>
           </div>
           {audioTracks.map((track) => (
             <AudioTrackLabel key={track.id} track={track} />
@@ -647,6 +647,9 @@ function AudioClipBar({
   const moveAudioClipResolved = useDocumentStore((s) => s.moveAudioClipResolved);
   const timelinePxPerMs = useEditorStore((s) => s.timelinePxPerMs);
   const timelineRowScale = useEditorStore((s) => s.timelineRowScale);
+  const selected = useEditorStore((s) => s.selectedAudioClipId === clip.id);
+  const setSelectedAudioClip = useEditorStore((s) => s.setSelectedAudioClip);
+  const clearSelection = useEditorStore((s) => s.clearSelection);
 
   const startMs = clip.startMs;
   const endMs = clip.startMs + clip.durationMs;
@@ -654,6 +657,7 @@ function AudioClipBar({
 
   const drag = (which: 'start' | 'end' | 'body', e: React.PointerEvent) => {
     e.stopPropagation();
+    setSelectedAudioClip(clip.id);
     const rect = tracksRef.current!.getBoundingClientRect();
     const base = { ...clip };
     const grabTime = timeAt(e.clientX, rect);
@@ -712,11 +716,12 @@ function AudioClipBar({
 
   return (
     <div
-      className={styles.audioClip}
+      className={`${styles.audioClip} ${selected ? styles.selected : ''}`}
       style={{ left: pct(startMs), width: `calc(${pct(endMs)} - ${pct(startMs)})` }}
       onPointerDown={(e) => drag('body', e)}
       onDoubleClick={(e) => {
         e.stopPropagation();
+        if (selected) clearSelection();
         removeAudioClip(track.id, clip.id);
       }}
       title={`${clip.name} — drag to move, edges to trim, double-click to remove`}

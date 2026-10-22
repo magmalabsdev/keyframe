@@ -38,6 +38,7 @@ import {
 import { getMediaBlob, getMediaUrl, subscribeMedia } from '../io/mediaCache';
 import { reversedBufferOffsetSec } from './reverseOffset';
 import { ctxTimeFor, forwardClipWindow, type ScheduleAnchor } from './forwardSchedule';
+import { gainAt, hasGainKeyframes, sampleGainCurve } from './gainAutomation';
 
 /** A playhead jump larger than this (ms) is treated as a seek, not normal advance. */
 const SEEK_EPS_MS = 150;
@@ -73,6 +74,9 @@ interface BufferVoiceInfo {
   startAtCtxTime: number;
   offsetSec: number;
   durationSec: number;
+  /** Whether gain was scheduled as a keyframed automation curve rather than a
+   * constant value — for introspection/verification only. */
+  gainCurveApplied: boolean;
 }
 
 type Mode = 'stopped' | 'forwardBuffer' | 'forwardElement' | 'reverse';
@@ -98,10 +102,6 @@ function modeFor(state = useEditorStore.getState()): Mode {
   if (!state.playing || state.playRate === 0) return 'stopped';
   if (state.playRate < 0) return 'reverse';
   return state.playRate === 1 ? 'forwardBuffer' : 'forwardElement';
-}
-
-function clipGain(track: AudioTrack, clip: AudioClip): number {
-  return track.muted ? 0 : track.gain * clip.gain;
 }
 
 /** Kicks off a decode for a clip's source if it isn't cached yet. */
@@ -220,7 +220,9 @@ function syncForwardVoices(fromMs: number): void {
       const v = getOrCreateForwardVoice(ctx, key, clip.mediaId);
       if (!v) continue;
 
-      v.gain.gain.value = clipGain(track, clip);
+      // Continuous per-tick, so a keyframed curve just falls out for free —
+      // no automation array needed on this path.
+      v.gain.gain.value = gainAt(clip, track.muted, fromMs);
       v.el.playbackRate = playRate;
       // Never write currentTime at readyState 0 — the seek is silently dropped.
       if (!v.ready) continue;
@@ -317,8 +319,16 @@ function scheduleForwardClip(
     return; // the subscribeAudioDecoded listener reschedules once it lands
   }
 
+  const enterMs = Math.max(clip.startMs, fromMs);
   const gainNode = ctx.createGain();
-  gainNode.gain.value = clipGain(track, clip);
+  const startAt = Math.max(ctxTimeFor(a, enterMs, 1), ctx.currentTime);
+  const gainCurveApplied = hasGainKeyframes(clip) && w.durationSec > 0;
+  if (gainCurveApplied) {
+    const curve = sampleGainCurve(clip, track.muted, enterMs, enterMs + w.durationSec * 1000);
+    gainNode.gain.setValueCurveAtTime(curve, startAt, w.durationSec);
+  } else {
+    gainNode.gain.value = gainAt(clip, track.muted, enterMs);
+  }
   const src = ctx.createBufferSource();
   src.buffer = buffer;
   if (clip.loop) {
@@ -329,8 +339,6 @@ function scheduleForwardClip(
   }
   src.connect(gainNode).connect(ctx.destination);
 
-  const enterMs = Math.max(clip.startMs, fromMs);
-  const startAt = Math.max(ctxTimeFor(a, enterMs, 1), ctx.currentTime);
   src.start(startAt, w.offsetSec);
   src.stop(startAt + w.durationSec);
   src.onended = () => {
@@ -343,6 +351,7 @@ function scheduleForwardClip(
     startAtCtxTime: startAt,
     offsetSec: w.offsetSec,
     durationSec: w.durationSec,
+    gainCurveApplied,
   });
 }
 
@@ -393,19 +402,29 @@ function scheduleReverseClip(
     return;
   }
 
+  const effectiveFromMs = Math.min(fromMs, clipEndMs);
+  const offsetSec = reversedBufferOffsetSec(clip, effectiveFromMs, clip.sourceDurationMs);
+  const remainTimelineMs = effectiveFromMs - clip.startMs;
+  const durationSec = remainTimelineMs / 1000 / R;
+  const startAt = Math.max(ctxTimeFor(a, effectiveFromMs, rate), ctx.currentTime);
+
   const gainNode = ctx.createGain();
-  gainNode.gain.value = clipGain(track, clip);
+  if (hasGainKeyframes(clip) && durationSec > 0) {
+    // Real time runs forward while the timeline position it corresponds to
+    // runs backward (from effectiveFromMs down to clip.startMs) — sampling
+    // backward is what makes the curve line up with the reversed audio.
+    const curve = sampleGainCurve(clip, track.muted, effectiveFromMs, clip.startMs);
+    gainNode.gain.setValueCurveAtTime(curve, startAt, durationSec);
+  } else {
+    gainNode.gain.value = gainAt(clip, track.muted, effectiveFromMs);
+  }
   const src = ctx.createBufferSource();
   src.buffer = buffer;
   src.playbackRate.value = R;
   src.connect(gainNode).connect(ctx.destination);
 
-  const effectiveFromMs = Math.min(fromMs, clipEndMs);
-  const offsetSec = reversedBufferOffsetSec(clip, effectiveFromMs, clip.sourceDurationMs);
-  const remainTimelineMs = effectiveFromMs - clip.startMs;
-  const startAt = Math.max(ctxTimeFor(a, effectiveFromMs, rate), ctx.currentTime);
   src.start(startAt, offsetSec);
-  src.stop(startAt + remainTimelineMs / 1000 / R);
+  src.stop(startAt + durationSec);
   src.onended = () => {
     activeReverse = activeReverse.filter((s) => s !== src);
   };

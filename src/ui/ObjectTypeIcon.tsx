@@ -56,6 +56,18 @@ const WireframeCubeIcon = () => (
   </svg>
 );
 
+/**
+ * The scene camera. Exported on its own rather than added to `ObjectTypeIcon`'s
+ * switch, because the camera is not a SceneObject — it lives on `Scene.camera`
+ * and is surfaced as a pinned row in the object tree.
+ */
+export const CameraIcon = () => (
+  <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round">
+    <path d="M1.8 4.6H9.2V11.4H1.8Z" />
+    <path d="M9.2 8.1 14.2 5.2V10.8L9.2 7.9Z" />
+  </svg>
+);
+
 const GearsIcon = () => (
   <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round">
     <circle cx="5.5" cy="5.5" r="2.5" />

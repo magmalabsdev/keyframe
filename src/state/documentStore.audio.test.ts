@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { getActiveScene, useDocumentStore } from './documentStore';
+import { getActiveScene, getChannelTrack, useDocumentStore } from './documentStore';
+import { useEditorStore } from './editorStore';
 import { createDefaultProject } from './defaults';
 import type { AudioClip } from './types';
 
@@ -175,12 +176,80 @@ describe('documentStore audio actions', () => {
     expectNoOverlaps();
   });
 
-  it('toggles mute and gain on a track', () => {
+  it('toggles mute on a track', () => {
     api().addAudioTrack();
     const t = tracks()[0].id;
     api().setAudioTrackMuted(t, true);
-    api().setAudioTrackGain(t, 2); // clamped to 1
     expect(tracks()[0].muted).toBe(true);
-    expect(tracks()[0].gain).toBe(1);
+  });
+});
+
+describe('audioClip:<id>:gain channel (keyframable volume)', () => {
+  beforeEach(() => {
+    api().setProject(createDefaultProject());
+  });
+
+  function addClip(gain = 0.6): string {
+    api().addAudioTrack();
+    const t = tracks()[0].id;
+    api().addAudioClip(t, clip({ id: 'c1', gain, startMs: 0, durationMs: 1000 }));
+    return t;
+  }
+
+  it('has no track (and reads as unanimated) until a keyframe is added', () => {
+    addClip();
+    expect(getChannelTrack(api().project, 'audioClip:c1:gain')).toBeUndefined();
+  });
+
+  it('cycleKeyframe adds a keyframe capturing the clip’s current gain', () => {
+    addClip(0.6);
+    useEditorStore.getState().setPlayhead(300);
+    api().cycleKeyframe('audioClip:c1:gain', 300);
+    const track = getChannelTrack(api().project, 'audioClip:c1:gain');
+    expect(track).toHaveLength(1);
+    expect(track![0]).toMatchObject({ timeMs: 300, value: 0.6, interpolation: 'linear' });
+  });
+
+  it('cycleKeyframe cycles interpolation modes and deletes on the last step', () => {
+    addClip();
+    const key = 'audioClip:c1:gain';
+    api().cycleKeyframe(key, 0); // none -> linear
+    expect(getChannelTrack(api().project, key)![0].interpolation).toBe('linear');
+    api().cycleKeyframe(key, 0); // -> easeIn
+    api().cycleKeyframe(key, 0); // -> easeOut
+    api().cycleKeyframe(key, 0); // -> easeInOut
+    api().cycleKeyframe(key, 0); // -> step
+    expect(getChannelTrack(api().project, key)![0].interpolation).toBe('step');
+    api().cycleKeyframe(key, 0); // -> deleted
+    expect(getChannelTrack(api().project, key)).toBeUndefined();
+  });
+
+  it('setChannelKeyframeValue adds or updates a keyframe directly', () => {
+    addClip();
+    const key = 'audioClip:c1:gain';
+    api().setChannelKeyframeValue(key, 0, 0.2);
+    api().setChannelKeyframeValue(key, 1000, 0.9);
+    expect(getChannelTrack(api().project, key)!.map((k) => [k.timeMs, k.value])).toEqual([
+      [0, 0.2],
+      [1000, 0.9],
+    ]);
+    api().setChannelKeyframeValue(key, 0, 0.5); // update in place, not a new keyframe
+    expect(getChannelTrack(api().project, key)).toHaveLength(2);
+  });
+
+  it('moveChannelKeyframe relocates a keyframe by id and keeps the track sorted', () => {
+    addClip();
+    const key = 'audioClip:c1:gain';
+    api().setChannelKeyframeValue(key, 0, 0.2);
+    api().setChannelKeyframeValue(key, 500, 0.8);
+    const id = getChannelTrack(api().project, key)!.find((k) => k.timeMs === 0)!.id;
+    api().moveChannelKeyframe(key, id, 900);
+    expect(getChannelTrack(api().project, key)!.map((k) => k.timeMs)).toEqual([500, 900]);
+  });
+
+  it('is a no-op for an unknown clip id', () => {
+    addClip();
+    api().setChannelKeyframeValue('audioClip:nope:gain', 0, 1);
+    expect(getChannelTrack(api().project, 'audioClip:nope:gain')).toBeUndefined();
   });
 });

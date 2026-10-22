@@ -1,13 +1,14 @@
 import { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
+import type * as THREE from 'three';
 import { getActiveScene, useDocumentStore } from '../state/documentStore';
 import { useEditorStore } from '../state/editorStore';
-import { evaluateCamera } from '../animation/evaluate';
+import { evaluateCamera, evaluateCameraFov } from '../animation/evaluate';
 import { poseObjectAtTime } from '../animation/pose';
 import { advancePlayhead } from '../animation/playback';
 import { resolveVariables } from '../animation/variables';
 import { applyObjectPose, buildNameMap } from '../render/applyPose';
-import type { Project } from '../state/types';
+import { DEFAULT_FOV, type Project } from '../state/types';
 import { getControls } from './cameraApi';
 
 /**
@@ -25,8 +26,9 @@ export function AnimationSystem() {
   const invalidate = useThree((s) => s.invalidate);
   const lastTime = useRef(-1);
   const lastProject = useRef<Project | null>(null);
+  const lastViewMode = useRef<string | null>(null);
 
-  useFrame((_, delta) => {
+  useFrame(({ camera }, delta) => {
     const editor = useEditorStore.getState();
     // The video exporter drives the scene itself; don't fight it.
     if (editor.exportProgress != null) return;
@@ -55,7 +57,10 @@ export function AnimationSystem() {
     }
 
     const dirty =
-      playing || time !== lastTime.current || project !== lastProject.current;
+      playing ||
+      time !== lastTime.current ||
+      project !== lastProject.current ||
+      editor.viewMode !== lastViewMode.current;
     if (dirty) {
       const nameMap = buildNameMap(threeScene);
       const ctx = {
@@ -69,22 +74,36 @@ export function AnimationSystem() {
       }
       lastTime.current = time;
       lastProject.current = project;
+      lastViewMode.current = editor.viewMode;
 
-      // Drive the camera from its keyframes whenever the frame is dirty (playing
-      // or the playhead was scrubbed), the same as objects — previewing camera
-      // animation by scrubbing requires this, not just playback. Manual camera
-      // navigation never touches playheadMs or the document, so it can't fight
-      // this: the drive only reasserts when the playhead itself moves.
-      const hasCameraTracks = Object.values(scene.camera.tracks ?? {}).some(
-        (t) => t && t.length > 0,
-      );
-      if (hasCameraTracks) {
+      // In 'camera' mode the viewport always shows exactly what the scene
+      // camera sees (its default pose when there are no keyframes), and manual
+      // navigation is disabled in CameraRig — so driving it here can never
+      // fight the user. In 'freecam' mode, never touch the camera from here:
+      // that's what lets the user navigate freely even while scrubbing or
+      // playing a scene whose camera has keyframe tracks.
+      if (editor.viewMode === 'camera') {
         const cam = evaluateCamera(scene.camera.default, scene.camera.tracks, time);
         getControls()?.setLookAt(
           cam.position[0], cam.position[1], cam.position[2],
           cam.target[0], cam.target[1], cam.target[2],
           false,
         );
+      }
+
+      // Looking through the camera means using its lens too; freecam keeps the
+      // viewport's own default lens. Reproject only on an actual change:
+      // updateProjectionMatrix every frame would defeat the demand frameloop.
+      const persp = camera as THREE.PerspectiveCamera;
+      if (persp.isPerspectiveCamera) {
+        const fov =
+          editor.viewMode === 'camera'
+            ? evaluateCameraFov(scene.camera, time)
+            : DEFAULT_FOV;
+        if (persp.fov !== fov) {
+          persp.fov = fov;
+          persp.updateProjectionMatrix();
+        }
       }
     }
 

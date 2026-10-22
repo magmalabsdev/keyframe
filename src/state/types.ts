@@ -12,7 +12,7 @@ export type Vec3 = [number, number, number];
 
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'step';
 
-export type ModelFormat = 'stl' | 'obj' | 'gltf' | 'glb' | 'step';
+export type ModelFormat = 'stl' | 'obj' | 'gltf' | 'glb' | 'fbx' | 'step';
 
 /**
  * Raw triangle data for a single mesh. Stored as typed arrays (not number[]) so
@@ -195,8 +195,12 @@ export interface AudioClip {
   durationMs: number;
   /** Decoded length of the whole source (ms), for clamping trims. */
   sourceDurationMs: number;
-  /** Clip volume, 0 (silent) .. 1 (full). */
+  /** Clip volume, 0 (silent) .. 1 (full), used where `gainTrack` has no
+   * keyframe covering a given time (or has none at all). */
   gain: number;
+  /** Keyframed volume over the timeline (absolute ms, like object tracks).
+   * Empty/absent means constant at `gain`. */
+  gainTrack?: ValueKeyframe[];
   /** Loop the source within the clip's duration. */
   loop: boolean;
 }
@@ -211,8 +215,6 @@ export interface AudioTrack {
   id: string;
   name: string;
   muted: boolean;
-  /** Track-level volume, 0 .. 1, multiplied with each clip's gain. */
-  gain: number;
   clips: AudioClip[];
 }
 
@@ -248,7 +250,8 @@ export type ChannelKey =
   | 'light.direction.0'
   | 'light.direction.1'
   | 'light.direction.2'
-  | 'text.writeOn';
+  | 'text.writeOn'
+  | 'fov';
 
 /** A single keyframe on one value channel. `value` is hex for the color channel. */
 export interface ValueKeyframe {
@@ -366,10 +369,32 @@ export interface CameraKeyframe extends CameraState {
   interpolation: Easing;
 }
 
+/** Vertical field of view (degrees) used when a camera has none stored. */
+export const DEFAULT_FOV = 45;
+export const MIN_FOV = 10;
+export const MAX_FOV = 120;
+
+/** Keeps a FOV inside the range three.js can project sanely. */
+export function clampFov(fov: number): number {
+  if (!Number.isFinite(fov)) return DEFAULT_FOV;
+  return Math.min(MAX_FOV, Math.max(MIN_FOV, fov));
+}
+
+/**
+ * Aspect ratio the camera renders at. Fixed 16:9 — it matches both the video
+ * export size (1280x720) and the default 1600x900 build plate, which the spec
+ * defines as the area the camera can see. The viewport canvas may be any shape,
+ * but the frustum gizmo and the export must agree on this.
+ */
+export const CAMERA_ASPECT = 16 / 9;
+
 export interface Camera {
   /** Fallback pose for any position/target axis with no keyframes. */
   default: CameraState;
-  /** Per-axis keyframe tracks: position.0-2, target.0-2. */
+  /** Vertical field of view in degrees. Absent on pre-fov documents; read
+   *  through `DEFAULT_FOV` rather than directly. Keyframable via the `fov` channel. */
+  fov?: number;
+  /** Per-axis keyframe tracks: position.0-2, target.0-2, plus fov. */
   tracks: Tracks;
   /** @deprecated Legacy whole-pose keyframes; present only until migrated. */
   keyframes?: CameraKeyframe[];
