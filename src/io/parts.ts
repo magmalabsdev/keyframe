@@ -96,6 +96,26 @@ export function extractParts(root: THREE.Object3D, baseName: string): LoadedPart
   return parts;
 }
 
+/**
+ * Drops parts that came back with no geometry. OCCT reports success even when
+ * tessellation fails (e.g. it hits its wasm memory cap), returning every solid
+ * with its name and color but no triangles — which would otherwise import as
+ * invisible objects. Throws when nothing is left to import.
+ */
+export function dropEmptyParts<T extends { positions: Float32Array }>(parts: T[]): T[] {
+  const kept = parts.filter((p) => p.positions.length > 0);
+  if (kept.length === 0 && parts.length > 0) {
+    throw new Error(
+      `No geometry was produced for any of the ${parts.length} parts — the model is likely too large ` +
+        'for the STEP engine’s memory limit. Try lowering import quality or splitting the assembly.',
+    );
+  }
+  if (kept.length < parts.length) {
+    console.warn(`Skipped ${parts.length - kept.length} of ${parts.length} parts with no geometry`);
+  }
+  return kept;
+}
+
 /** Center all parts together: combined bbox centered in XY, resting on z=0. */
 export function centerParts(parts: Array<{ positions: Float32Array }>): void {
   let minX = Infinity, minY = Infinity, minZ = Infinity;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { centerParts, extractParts } from './parts';
+import { centerParts, dropEmptyParts, extractParts } from './parts';
 
 function bounds(positions: Float32Array) {
   const min = [Infinity, Infinity, Infinity];
@@ -89,5 +89,18 @@ describe('centerParts', () => {
     expect(min[2]).toBeCloseTo(0);
     // Relative arrangement is preserved.
     expect(b.positions[0] - a.positions[0]).toBeCloseTo(8);
+  });
+});
+
+describe('dropEmptyParts', () => {
+  it('keeps parts with geometry and drops empty ones', () => {
+    const full = { positions: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0]) };
+    const empty = { positions: new Float32Array(0) };
+    expect(dropEmptyParts([full, empty])).toEqual([full]);
+  });
+
+  it('throws when no part has geometry (failed tessellation)', () => {
+    const empty = { positions: new Float32Array(0) };
+    expect(() => dropEmptyParts([empty, empty])).toThrow(/No geometry was produced/);
   });
 });

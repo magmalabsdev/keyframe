@@ -4,7 +4,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ensureNormals } from './normals';
-import { centerParts } from './parts';
+import { centerParts, dropEmptyParts } from './parts';
 
 /** A parsed part shipped back to the main thread as transferable typed arrays. */
 export interface WorkerPart {
@@ -88,7 +88,7 @@ function occtColorToHex(c?: ArrayLike<number> | null): string | undefined {
   return '#' + new THREE.Color(c[0], c[1], c[2]).getHexString();
 }
 
-function pickStepColor(mesh: import('occt-import-js').OcctMesh): string | undefined {
+function pickStepColor(mesh: import('../vendor/occt-import-js/occt-import-js.js').OcctMesh): string | undefined {
   const faces = mesh.brep_faces;
   if (faces && faces.length > 0) {
     const coverage = new Map<string, { weight: number; color: number[] }>();
@@ -114,18 +114,10 @@ async function loadStep(
   baseName: string,
   quality: number,
 ): Promise<WorkerPart[]> {
-  const wasmUrl = (await import('occt-import-js/dist/occt-import-js.wasm?url')).default;
-  const mod = (await import('occt-import-js')) as unknown as Record<string, unknown>;
-  const candidate =
-    (typeof mod === 'function' && mod) ||
-    (typeof mod.default === 'function' && mod.default) ||
-    (mod.default &&
-      typeof (mod.default as Record<string, unknown>).default === 'function' &&
-      (mod.default as Record<string, unknown>).default);
-  if (typeof candidate !== 'function') throw new Error('Could not resolve occt-import-js factory');
-  const occtFactory = candidate as (opts: {
-    locateFile?: (p: string) => string;
-  }) => Promise<import('occt-import-js').OcctModule>;
+  // Vendored build with a 4 GB heap cap; the npm release stops at 2 GB, which
+  // large assemblies exhaust (tessellation then silently yields empty meshes).
+  const wasmUrl = (await import('../vendor/occt-import-js/occt-import-js.wasm?url')).default;
+  const occtFactory = (await import('../vendor/occt-import-js/occt-import-js.js')).default;
   const occt = await occtFactory({ locateFile: () => wasmUrl });
 
   const q = Math.max(0, Math.min(1, quality));
@@ -142,7 +134,7 @@ async function loadStep(
     throw new Error('Failed to parse STEP file');
   }
 
-  return result.meshes.map((mesh, i) => {
+  const parts = result.meshes.map((mesh, i) => {
     const g = new THREE.BufferGeometry();
     g.setAttribute(
       'position',
@@ -160,6 +152,7 @@ async function loadStep(
     // Append an index so duplicate solid names (often all "SOLID") stay unique.
     return toPart(`${mesh.name?.trim() || baseName} ${i + 1}`, g, pickStepColor(mesh));
   });
+  return dropEmptyParts(parts);
 }
 
 async function parse(req: WorkerRequest): Promise<{ format: string; parts: WorkerPart[] }> {
